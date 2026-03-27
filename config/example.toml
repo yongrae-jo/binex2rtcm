@@ -4,8 +4,8 @@ level = "INFO"
 [validation]
 parse_with_pyrtcm = true
 
-# 공개 저장소용 예제입니다.
-# 실제 계정 정보는 로컬 설정 파일에만 저장하고 아래 플레이스홀더를 교체해서 사용하십시오.
+# 기본값은 로컬 샘플 파일을 재생하는 오프라인 실행 예제입니다.
+# 실시간 NTRIP 운영용 설정은 이 파일을 복사해 별도 로컬 설정 파일에서 수정해서 사용하십시오.
 
 [runtime]
 # 0 또는 음수면 사용자가 중지할 때까지 계속 실행합니다.
@@ -64,18 +64,15 @@ SBS = 7
 # - tcp_server: host, port
 # - tcp_client: host, port
 
-# 파일 재생 입력 예시
-#[[inputs]]
-#name = "default-file"
-#session = "default"
-#kind = "file_replay"
-#data_format = "binex"
-#path = "data/input.bnx"
-#chunk_size = 4096
-#replay_rate = 0
-#capture_path = "runs/default/replayed-input.bnx"
-#capture_interval = "10M"
-#capture_rinex = { enabled = true, observation = true, navigation = true }
+# 기본 오프라인 예제: BINEX 샘플 파일 -> RTCM 파일
+[[inputs]]
+name = "CHUL sample"
+session = "default"
+kind = "file_replay"
+data_format = "binex"
+path = "sample/CHUL_20260327_120000.bnx"
+chunk_size = 4096
+replay_rate = 0
 
 # TCP client 입력 예시
 #[[inputs]]
@@ -102,13 +99,22 @@ SBS = 7
 #port = 9100
 #max_queue = 512
 
-# RTCM -> BINEX 파일 변환 예시
+[[outputs]]
+name = "CHUL RTCM"
+session = "default"
+kind = "file"
+data_format = "rtcm"
+path = "runs/example/chul.rtcm3"
+rinex = { enabled = true, observation = true, navigation = true }
+max_queue = 512
+
+# RTCM -> BINEX 파일 변환 예시 (`sample/CHUL_20260327_120000.rtcm3`)
 #[[inputs]]
-#name = "rtcm-replay"
+#name = "CHUL rtcm sample"
 #session = "replay"
 #kind = "file_replay"
 #data_format = "rtcm"
-#path = "data/input.rtcm3"
+#path = "sample/CHUL_20260327_120000.rtcm3"
 #replay_rate = 0
 #
 #[[outputs]]
@@ -120,114 +126,31 @@ SBS = 7
 #interval = "1H"
 #rinex = { enabled = true, observation = true, navigation = true }
 
-[[inputs]]
-name = "SEOS BINEX"
-session = "SEOS"
-kind = "ntrip_client"
-data_format = "binex"
-host = "gnssdata.or.kr"
-port = 2101
-mountpoint = "SEOS-BINEX"
-username = "your-ntrip-username"
-password = "your-ntrip-password"
-chunk_size = 4096
-connect_timeout_s = 10.0
-reconnect_delay_s = 5.0
-capture_path = "runs/SEOS/binex/SEOS.bnx"
-capture_interval = "1H"
-capture_rinex = { enabled = true, observation = true, navigation = true }
-send_nmea_gga = false
-
-[[outputs]]
-name = "SEOS RTCM"
-session = "SEOS"
-kind = "file"
-data_format = "rtcm"
-path = "runs/SEOS/rtcm/SEOS.rtcm3"
-interval = "1H"
-rinex = { enabled = true, observation = true, navigation = true }
-max_queue = 512
-
-[[inputs]]
-name = "INCH BINEX"
-session = "INCH"
-kind = "ntrip_client"
-data_format = "binex"
-host = "gnssdata.or.kr"
-port = 2101
-mountpoint = "INCH-BINEX"
-username = "your-ntrip-username"
-password = "your-ntrip-password"
-chunk_size = 4096
-connect_timeout_s = 10.0
-reconnect_delay_s = 5.0
-capture_path = "runs/INCH/binex/INCH.bnx"
-capture_interval = "1H"
-capture_rinex = { enabled = true, observation = true, navigation = true }
-send_nmea_gga = false
-
-[[outputs]]
-name = "INCH RTCM"
-session = "INCH"
-kind = "file"
-data_format = "rtcm"
-path = "runs/INCH/rtcm/INCH.rtcm3"
-interval = "1H"
-rinex = { enabled = true, observation = true, navigation = true }
-max_queue = 512
-
-[[inputs]]
-name = "CHUL BINEX"
-session = "CHUL"
-kind = "ntrip_client"
-data_format = "binex"
-host = "gnssdata.or.kr"
-port = 2101
-mountpoint = "CHUL-BINEX"
-username = "your-ntrip-username"
-password = "your-ntrip-password"
-chunk_size = 4096
-connect_timeout_s = 10.0
-reconnect_delay_s = 5.0
-capture_path = "runs/CHUL/binex/CHUL.bnx"
-capture_interval = "1H"
-capture_rinex = { enabled = true, observation = true, navigation = true }
-send_nmea_gga = false
-
-[[outputs]]
-name = "CHUL RTCM"
-session = "CHUL"
-kind = "file"
-data_format = "rtcm"
-path = "runs/CHUL/rtcm/CHUL.rtcm3"
-interval = "1H"
-rinex = { enabled = true, observation = true, navigation = true }
-max_queue = 512
-
-[[inputs]]
-name = "YEOJ BINEX"
-session = "YEOJ"
-kind = "ntrip_client"
-data_format = "binex"
-host = "gnssdata.or.kr"
-port = 2101
-mountpoint = "YEOJ-BINEX"
-username = "your-ntrip-username"
-password = "your-ntrip-password"
-chunk_size = 4096
-connect_timeout_s = 10.0
-reconnect_delay_s = 5.0
-capture_path = "runs/YEOJ/binex/YEOJ.bnx"
-capture_interval = "1H"
-capture_rinex = { enabled = true, observation = true, navigation = true }
-send_nmea_gga = false
-
-[[outputs]]
-name = "YEOJ RTCM"
-session = "YEOJ"
-kind = "file"
-data_format = "rtcm"
-path = "runs/YEOJ/rtcm/YEOJ.rtcm3"
-interval = "1H"
-rinex = { enabled = true, observation = true, navigation = true }
-max_queue = 512
+# 실시간 NTRIP 운영 예시
+#[[inputs]]
+#name = "CHUL BINEX live"
+#session = "live"
+#kind = "ntrip_client"
+#data_format = "binex"
+#host = "gnssdata.or.kr"
+#port = 2101
+#mountpoint = "CHUL-BINEX"
+#username = "your-ntrip-username"
+#password = "your-ntrip-password"
+#chunk_size = 4096
+#connect_timeout_s = 10.0
+#reconnect_delay_s = 5.0
+#capture_path = "runs/live/chul_input.bnx"
+#capture_interval = "1H"
+#capture_rinex = { enabled = true, observation = true, navigation = true }
+#send_nmea_gga = false
+#
+#[[outputs]]
+#name = "CHUL RTCM live"
+#session = "live"
+#kind = "file"
+#data_format = "rtcm"
+#path = "runs/live/chul.rtcm3"
+#interval = "1H"
+#rinex = { enabled = true, observation = true, navigation = true }
+#max_queue = 512

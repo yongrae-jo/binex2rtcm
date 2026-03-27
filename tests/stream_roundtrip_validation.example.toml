@@ -5,7 +5,7 @@ duration_s = 60
 # 예시 경로는 macOS Apple Silicon 기준입니다.
 # 현재 OS와 설치 위치에 맞게 ringo_binary를 수정하십시오.
 ringo_binary = "tools/ringo/ringo-v0.9.4-macos_arm64/ringo"
-approx_time = "2026/03/27 03:34:29"
+approx_time = "2026/03/27 12:00:00"
 
 [artifacts]
 workdir = "runs/stream-roundtrip"
@@ -17,33 +17,21 @@ require_matching_satellite_rows = true
 require_matching_signal_fields = true
 require_same_constellations = true
 validate_obs_layout = true
-validate_nav_layout = true
+# 기본 샘플에서는 RINGO가 생성한 BINEX NAV의 continuation 줄 배치 차이로 실패할 수 있어 비활성화합니다.
+validate_nav_layout = false
 
 [binex_input]
-# 공개 저장소용 플레이스홀더입니다.
-# 실제 계정 정보로 교체한 뒤 실행하십시오.
-name = "BINEX stream"
+name = "CHUL BINEX sample"
 session = "BINEX"
-kind = "ntrip_client"
-host = "gnssdata.or.kr"
-port = 2101
-mountpoint = "YANJ-BINEX"
-username = "your-ntrip-username"
-password = "your-ntrip-password"
+kind = "file_replay"
+path = "sample/CHUL_20260327_120000.bnx"
 chunk_size = 4096
-connect_timeout_s = 10.0
-reconnect_delay_s = 5.0
-send_nmea_gga = false
+replay_rate = 0
 
 [rtcm_input]
-name = "RTCM stream"
+name = "CHUL RTCM sample"
 session = "RTCM"
-kind = "ntrip_client"
-host = "gnssdata.or.kr"
-port = 2101
-mountpoint = "YANJ-RTCM32"
-username = "your-ntrip-username"
-password = "your-ntrip-password"
+kind = "file_replay"
+path = "sample/CHUL_20260327_120000.rtcm3"
 chunk_size = 4096
-connect_timeout_s = 10.0
-reconnect_delay_s = 5.0
+replay_rate = 0

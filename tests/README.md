@@ -37,7 +37,7 @@ python -m pip install -e ".[dev]"
 참고:
 
 - 테스트 스크립트는 생성한 app config를 실행할 때 내부적으로 `src`를 `PYTHONPATH`에 추가하지만, 테스트 스크립트 자신의 import를 위해서는 먼저 설치가 끝나 있어야 합니다.
-- `tests/stream_roundtrip_validation.example.toml`의 NTRIP 계정 값은 플레이스홀더이므로 실제 환경 값으로 바꿔야 합니다.
+- `tests/stream_roundtrip_validation.example.toml`의 기본값은 `sample/CHUL_20260327_120000.bnx`, `sample/CHUL_20260327_120000.rtcm3`를 사용하는 오프라인 예제입니다.
 - 예시의 `ringo_binary` 경로는 macOS Apple Silicon 기준입니다. Windows, Linux, 다른 경로에서는 환경에 맞게 수정해야 합니다.
 
 ## 파일
@@ -126,6 +126,41 @@ Windows PowerShell:
 .\.venv\Scripts\python.exe tests/stream_roundtrip_validation.py `
   --config tests/stream_roundtrip_validation.example.toml
 ```
+
+### CHUL 12시 샘플로 오프라인 검증
+
+현재 작업 폴더 기준 로컬 샘플:
+
+- BINEX: `sample/CHUL_20260327_120000.bnx`
+- RTCM: `sample/CHUL_20260327_120000.rtcm3`
+- 대응 OBS 첫 epoch: `2026-03-27 12:00:00 GPST`
+
+`tests/stream_roundtrip_validation.example.toml`은 기본값이 이미 `file_replay` 입력이므로 그대로 실행해도 됩니다.
+
+```toml
+[tools]
+approx_time = "2026/03/27 12:00:00"
+
+[binex_input]
+name = "CHUL BINEX sample"
+session = "BINEX"
+kind = "file_replay"
+path = "sample/CHUL_20260327_120000.bnx"
+replay_rate = 0
+
+[rtcm_input]
+name = "CHUL RTCM sample"
+session = "RTCM"
+kind = "file_replay"
+path = "sample/CHUL_20260327_120000.rtcm3"
+replay_rate = 0
+```
+
+샘플 참고:
+
+- `file_replay`에서는 `host`, `port`, `username`, `password`, `connect_timeout_s`, `reconnect_delay_s`가 필요하지 않습니다.
+- `approx_time`은 RTCM 샘플의 관측 시각 근처로 맞춰 두는 편이 안전합니다. 위 CHUL 샘플은 `2026-03-27 12:00:00 GPST`부터 시작합니다.
+- 위 `sample/...` 경로는 현재 작업 폴더에 준비된 로컬 샘플 기준입니다. 다른 환경에서는 해당 파일 경로만 바꿔 사용하면 됩니다.
 
 ## 산출물
 

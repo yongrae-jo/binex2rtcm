@@ -91,26 +91,57 @@ python -m pip install -e ".[dev]"
 
 ## 빠른 시작
 
-1. `config/example.toml`을 `config/local.toml` 같은 로컬 설정 파일로 복사합니다.
-2. 예제의 `your-ntrip-username`, `your-ntrip-password`를 실제 값으로 교체합니다.
-3. 운영 환경에 맞게 입력, 출력, 로그 경로를 수정합니다.
-4. 실행합니다.
+1. 기본 오프라인 예제를 바로 실행합니다.
 
 ```bash
-binex2rtcm --config config/local.toml
+binex2rtcm --config config/example.toml
 ```
 
 모니터와 시간 제한을 함께 쓰려면:
 
 ```bash
-binex2rtcm --config config/local.toml --monitor --duration 60
+binex2rtcm --config config/example.toml --monitor --duration 60
 ```
 
 빠른 시작 참고:
 
-- `config/example.toml`은 공개 저장소 기준 예제이므로 실제 계정 정보는 포함하지 않습니다.
+- `config/example.toml`의 기본값은 `sample/CHUL_20260327_120000.bnx`를 재생하는 오프라인 예제입니다.
+- 산출물은 `runs/example/` 아래에 생성됩니다.
+- 실시간 NTRIP 운영용으로 쓰려면 `config/example.toml`을 `config/local.toml` 같은 로컬 설정 파일로 복사해 `ntrip_client` 입력 블록으로 바꿔 사용하십시오.
 - TOML 안의 상대 경로는 `설정 파일 위치`가 아니라 `명령을 실행한 현재 작업 디렉터리` 기준으로 해석됩니다.
-- 네트워크 없이 확인하고 싶다면 `config/example.toml`의 주석 처리된 `file_replay` 예시를 바탕으로 로컬 파일 재생 구성을 만들 수 있습니다.
+
+### 로컬 샘플 파일로 오프라인 재생
+
+현재 작업 폴더에는 다음 로컬 샘플이 있습니다.
+
+- BINEX: `sample/CHUL_20260327_120000.bnx` (약 `980 KB`, 첫 epoch `2026-03-27 12:00:00 GPST`)
+- RTCM: `sample/CHUL_20260327_120000.rtcm3` (약 `852 KB`, 같은 구간을 변환한 결과)
+
+예를 들어 BINEX 샘플 하나만 빠르게 재생해 보려면 다음과 같이 `file_replay` 입력을 만들면 됩니다.
+
+```toml
+[[inputs]]
+name = "CHUL sample"
+session = "sample"
+kind = "file_replay"
+data_format = "binex"
+path = "sample/CHUL_20260327_120000.bnx"
+replay_rate = 0
+
+[[outputs]]
+name = "sample-log"
+session = "sample"
+kind = "file"
+data_format = "rtcm"
+path = "runs/sample/chul.rtcm3"
+rinex = { enabled = true, observation = true, navigation = true }
+```
+
+샘플 참고:
+
+- `replay_rate = 0`이면 가능한 한 빨리 EOF까지 재생합니다.
+- `interval`을 생략하면 종료 시점까지 하나의 세그먼트 파일만 유지합니다.
+- 위 `sample/...` 경로는 현재 작업 폴더에 준비된 로컬 샘플 기준입니다. 다른 환경에서는 같은 형식의 파일 경로로 바꿔 사용하면 됩니다.
 
 ## CLI
 
@@ -370,6 +401,9 @@ binex2rtcm --config config/example.toml --monitor
 - `pyrtcm is not installed; RTCM parse validation disabled` 로그가 나오면 `pyrtcm`을 추가 설치해야 self-check가 동작합니다.
 - 설정한 파일명과 실제 산출물 파일명이 다르면 GPST 기준 `_YYYYMMDD_HHMMSS` 접미사가 자동으로 붙는 동작인지 먼저 확인하십시오.
 - 상대 경로 입력이 기대와 다르면 명령을 실행한 현재 작업 디렉터리를 기준으로 다시 확인하십시오.
+- `split BDS epoch ... into 2 RTCM MSM messages ...`는 오류가 아니라 `INFO` 로그입니다. BDS 관측 한 epoch가 RTCM MSM mask slot 제한(`<= 64`)을 넘어서 여러 메시지로 나뉘었다는 뜻입니다.
+- 로그가 몇 초간 조용하다가 같은 초에 여러 줄이 몰려 보여도, 입력이 chunked/buffered 상태로 들어온 뒤 내부 큐가 빠르게 비워진 경우일 수 있습니다. `WARNING`, `ERROR`, `NTRIP reconnect after error:`가 없다면 우선 정상 동작으로 보는 편이 맞습니다.
+- `Ctrl+C` 뒤에 split 로그가 한 줄 더 찍히고 `shutdown requested by user`가 나오는 것은 이미 읽어 둔 chunk와 pending epoch를 마저 처리한 뒤 종료하기 때문입니다.
 
 ## 운영 권장 사항
 
