@@ -13,7 +13,7 @@ from ..errors import ProtocolError, UnsupportedMessageError, UnsupportedRecordEr
 from ..model.ephemeris import Ephemeris
 from ..model.observation import EpochObservations
 from ..model.station import StationInfo
-from ..rinex import RinexSegmentBuffer
+from ..rinex import BackgroundRinexExporter, RinexSegmentBuffer
 from ..rtcm import RtcmDecoder, RtcmFramer
 from ..stream_logging import LogSegment, RotatingBinaryLog
 from .base import InputAdapter, QueuedOutputAdapter
@@ -39,6 +39,7 @@ class FileOutput(QueuedOutputAdapter):
         super().__init__(config.max_queue)
         marker_name = config.session or config.name
         self._rinex = RinexSegmentBuffer(config.rinex, marker_name=marker_name) if config.rinex.enabled else None
+        self._rinex_exporter = BackgroundRinexExporter(f"output-{config.name}") if self._rinex is not None else None
         self._data_format = config.data_format.strip().lower()
         self._framer = None
         self._decoder = None
@@ -53,12 +54,16 @@ class FileOutput(QueuedOutputAdapter):
                 raise ValueError(f"Unsupported file output data format: {config.data_format}")
 
         def flush_rinex(segment: LogSegment) -> None:
-            if self._rinex is None:
+            if self._rinex is None or self._rinex_exporter is None:
                 return
-            self._rinex.export(segment.path, segment.closed_at)
-            self._rinex.reset()
+            self._rinex_exporter.submit(self._rinex.detach_snapshot(), segment.path, segment.closed_at)
 
         self._writer = RotatingBinaryLog(Path(config.path or ""), config.interval, on_close=flush_rinex)
+
+    async def start(self) -> None:
+        if self._rinex_exporter is not None:
+            await self._rinex_exporter.start()
+        await super().start()
 
     async def _write(self, data: bytes, logical_time=None) -> None:
         self._writer.write(data, logical_time)
@@ -79,4 +84,8 @@ class FileOutput(QueuedOutputAdapter):
 
     async def close(self) -> None:
         await super().close()
-        self._writer.close()
+        try:
+            self._writer.close()
+        finally:
+            if self._rinex_exporter is not None:
+                await self._rinex_exporter.close()

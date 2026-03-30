@@ -13,11 +13,12 @@ from .binex import BinexDecoder, BinexEncoder, BinexFramer, BinexScheduler
 from .config import AppConfig, InputConfig, OutputConfig
 from .errors import ProtocolError, UnsupportedMessageError, UnsupportedRecordError
 from .io import FileOutput, FileReplayInput, NtripClientInput, OutputAdapter, TcpClientInput, TcpClientOutput, TcpServerOutput
+from .logging_utils import append_input_error
 from .model.ephemeris import Ephemeris
 from .model.observation import EpochObservations, SatelliteObservation
 from .model.station import StationInfo
 from .monitor import ConsoleMonitor
-from .rinex import RinexSegmentBuffer
+from .rinex import BackgroundRinexExporter, RinexSegmentBuffer
 from .rinex.header import rinex_sat_sort_key
 from .rtcm import MsmMessage, RtcmDecoder, RtcmEncoder, RtcmFramer, RtcmScheduler
 from .stats import InputStats, OutputStats, RuntimeStats
@@ -181,14 +182,19 @@ class ConversionService:
         input_codec = _InputCodec(input_config.data_format)
         capture_log = None
         capture_rinex = None
+        capture_rinex_exporter = None
         if input_config.capture_path and input_config.capture_rinex.enabled:
             capture_rinex = RinexSegmentBuffer(input_config.capture_rinex, marker_name=input_config.session or input_config.name)
+            capture_rinex_exporter = BackgroundRinexExporter(
+                f"input-{input_config.name}",
+                on_error=lambda exc: self._handle_capture_rinex_error(input_config, input_stats, exc),
+            )
+            await capture_rinex_exporter.start()
 
         def flush_capture_rinex(segment: LogSegment) -> None:
-            if capture_rinex is None:
+            if capture_rinex is None or capture_rinex_exporter is None:
                 return
-            capture_rinex.export(segment.path, segment.closed_at)
-            capture_rinex.reset()
+            capture_rinex_exporter.submit(capture_rinex.detach_snapshot(), segment.path, segment.closed_at)
 
         if input_config.capture_path:
             capture_log = RotatingBinaryLog(
@@ -206,7 +212,7 @@ class ConversionService:
             elif isinstance(item, Ephemeris):
                 input_stats.ephemerides += 1
             for group in output_groups:
-                await self._emit_item_to_group(group, item, item_time, input_stats)
+                await self._emit_item_to_group(group, item, item_time, input_config, input_stats)
 
         async def flush_pending_epoch() -> None:
             nonlocal pending_epoch
@@ -219,7 +225,7 @@ class ConversionService:
         cancelled_error: asyncio.CancelledError | None = None
         try:
             for group in output_groups:
-                await self._emit_bootstrap(group, input_stats)
+                await self._emit_bootstrap(group, input_config, input_stats)
 
             async for chunk in adapter.iter_chunks():
                 if not chunk:
@@ -232,7 +238,12 @@ class ConversionService:
                     input_stats.binex_frames += len(frames)
                 except ProtocolError as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(
+                        input_config,
+                        input_stats,
+                        f"discarding malformed {input_codec.data_format.upper()} chunk",
+                        exc,
+                    )
                     LOGGER.warning("discarding malformed %s chunk: %s", input_codec.data_format.upper(), exc)
                     continue
 
@@ -249,7 +260,12 @@ class ConversionService:
                         continue
                     except ProtocolError as exc:
                         input_stats.errors += 1
-                        input_stats.last_error = str(exc)
+                        self._record_input_error(
+                            input_config,
+                            input_stats,
+                            f"discarding malformed {input_codec.data_format.upper()} frame",
+                            exc,
+                        )
                         LOGGER.warning("discarding malformed %s frame: %s", input_codec.data_format.upper(), exc)
                         if capture_log is not None:
                             input_stats.capture_bytes += capture_log.write(raw_frame)
@@ -280,16 +296,49 @@ class ConversionService:
             await flush_pending_epoch()
         except asyncio.CancelledError as exc:
             cancelled_error = exc
+        except Exception as exc:
+            input_stats.errors += 1
+            self._record_input_error(input_config, input_stats, "input pipeline failed", exc)
+            raise
         finally:
             try:
                 await flush_pending_epoch()
             finally:
-                if capture_log is not None:
-                    capture_log.close()
+                try:
+                    if capture_log is not None:
+                        capture_log.close()
+                finally:
+                    if capture_rinex_exporter is not None:
+                        await capture_rinex_exporter.close()
         if cancelled_error is not None:
             raise cancelled_error
 
-    async def _emit_bootstrap(self, group: _OutputGroup, input_stats: InputStats) -> None:
+    def _record_input_error(
+        self,
+        input_config: InputConfig,
+        input_stats: InputStats,
+        message: str,
+        exc: Exception,
+    ) -> None:
+        input_stats.last_error = str(exc)
+        append_input_error(input_config, "WARNING", f"{message}: {exc}")
+
+    def _handle_capture_rinex_error(
+        self,
+        input_config: InputConfig,
+        input_stats: InputStats,
+        exc: Exception,
+    ) -> None:
+        input_stats.errors += 1
+        self._record_input_error(input_config, input_stats, "failed to export captured RINEX segment", exc)
+        LOGGER.warning("failed to export captured RINEX segment: %s", exc)
+
+    async def _emit_bootstrap(
+        self,
+        group: _OutputGroup,
+        input_config: InputConfig,
+        input_stats: InputStats,
+    ) -> None:
         if group.data_format == "rtcm":
             scheduler = group.scheduler
             encoder = group.encoder
@@ -299,7 +348,7 @@ class ConversionService:
                     encoded_frames = encoder.encode_many(payload)
                 except Exception as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(input_config, input_stats, "failed to emit bootstrap RTCM payload", exc)
                     LOGGER.warning("failed to emit bootstrap RTCM payload: %s", exc)
                     continue
                 for data in encoded_frames:
@@ -310,7 +359,7 @@ class ConversionService:
                         input_stats.rtcm_messages += 1
                     except Exception as exc:
                         input_stats.errors += 1
-                        input_stats.last_error = str(exc)
+                        self._record_input_error(input_config, input_stats, "failed to emit bootstrap RTCM payload", exc)
                         LOGGER.warning("failed to emit bootstrap RTCM payload: %s", exc)
         else:
             scheduler = group.scheduler
@@ -321,7 +370,7 @@ class ConversionService:
                     await self._emit_targets(group.targets, encoder.encode(scheduled_item, logical_time), logical_time)
                 except Exception as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(input_config, input_stats, "failed to emit bootstrap BINEX payload", exc)
                     LOGGER.warning("failed to emit bootstrap BINEX payload: %s", exc)
 
     async def _emit_item_to_group(
@@ -329,6 +378,7 @@ class ConversionService:
         group: _OutputGroup,
         item: object,
         item_time,
+        input_config: InputConfig,
         input_stats: InputStats,
     ) -> None:
         if group.data_format == "rtcm":
@@ -354,12 +404,12 @@ class ConversionService:
                         encoded_frames = encoder.encode_many(payload)
                 except UnsupportedMessageError as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(input_config, input_stats, "skipping unsupported RTCM payload", exc)
                     LOGGER.warning("skipping unsupported RTCM payload: %s", exc)
                     continue
                 except Exception as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(input_config, input_stats, "failed to encode RTCM payload", exc)
                     LOGGER.warning("failed to encode RTCM payload: %s", exc)
                     continue
                 for data in encoded_frames:
@@ -370,7 +420,7 @@ class ConversionService:
                         input_stats.rtcm_messages += 1
                     except Exception as exc:
                         input_stats.errors += 1
-                        input_stats.last_error = str(exc)
+                        self._record_input_error(input_config, input_stats, "failed to emit RTCM payload", exc)
                         LOGGER.warning("failed to emit RTCM payload: %s", exc)
             if msm_payload_indexes:
                 encoder.advance_msm_sequence()
@@ -383,19 +433,19 @@ class ConversionService:
                     data = encoder.encode(scheduled_item, logical_time)
                 except UnsupportedRecordError as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(input_config, input_stats, "skipping unsupported BINEX payload", exc)
                     LOGGER.warning("skipping unsupported BINEX payload: %s", exc)
                     continue
                 except Exception as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(input_config, input_stats, "failed to encode BINEX payload", exc)
                     LOGGER.warning("failed to encode BINEX payload: %s", exc)
                     continue
                 try:
                     await self._emit_targets(group.targets, data, logical_time)
                 except Exception as exc:
                     input_stats.errors += 1
-                    input_stats.last_error = str(exc)
+                    self._record_input_error(input_config, input_stats, "failed to emit BINEX payload", exc)
                     LOGGER.warning("failed to emit BINEX payload: %s", exc)
 
     async def _emit_targets(self, targets: list[_OutputTarget], data: bytes, logical_time=None) -> None:

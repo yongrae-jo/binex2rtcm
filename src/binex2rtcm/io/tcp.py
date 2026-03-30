@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 
 from ..config import InputConfig, OutputConfig
 from ..errors import StreamError
+from ..logging_utils import append_input_error
 from .base import InputAdapter, QueuedOutputAdapter
 
 LOGGER = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class TcpClientInput(InputAdapter):
             except asyncio.CancelledError:  # pragma: no cover
                 raise
             except Exception as exc:
+                append_input_error(self._config, "WARNING", f"TCP input reconnect after error: {exc}")
                 LOGGER.warning("TCP input reconnect after error: %s", exc)
                 yield b""
                 await asyncio.sleep(self._config.reconnect_delay_s)

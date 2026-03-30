@@ -26,6 +26,37 @@ def _ephemeris_key(eph: Ephemeris) -> tuple[object, ...]:
 
 
 @dataclass(slots=True)
+class RinexSegmentSnapshot:
+    config: RinexExportConfig
+    marker_name: str = ""
+    station: StationInfo | None = None
+    epochs: list[EpochObservations] = field(default_factory=list)
+    ephemerides: dict[tuple[object, ...], Ephemeris] = field(default_factory=dict)
+    _obs_writer: RinexObsWriter = field(default_factory=RinexObsWriter)
+    _nav_writer: RinexNavWriter = field(default_factory=RinexNavWriter)
+
+    def empty(self) -> bool:
+        return not self.epochs and not self.ephemerides
+
+    def export(self, segment_path: Path, generated_at: datetime | None = None) -> list[Path]:
+        if not self.config.enabled or self.empty():
+            return []
+
+        written: list[Path] = []
+        if self.config.observation:
+            obs_path = segment_path.with_suffix(".obs")
+            result = self._obs_writer.write(obs_path, self.station, self.epochs, generated_at, self.marker_name)
+            if result is not None:
+                written.append(result)
+        if self.config.navigation:
+            nav_path = segment_path.with_suffix(".nav")
+            result = self._nav_writer.write(nav_path, list(self.ephemerides.values()), generated_at)
+            if result is not None:
+                written.append(result)
+        return written
+
+
+@dataclass(slots=True)
 class RinexSegmentBuffer:
     config: RinexExportConfig
     marker_name: str = ""
@@ -52,21 +83,30 @@ class RinexSegmentBuffer:
         return not self.epochs and not self._ephemerides
 
     def export(self, segment_path: Path, generated_at: datetime | None = None) -> list[Path]:
-        if not self.config.enabled:
-            return []
+        snapshot = RinexSegmentSnapshot(
+            config=self.config,
+            marker_name=self.marker_name,
+            station=self.station,
+            epochs=list(self.epochs),
+            ephemerides=dict(self._ephemerides),
+        )
+        return snapshot.export(segment_path, generated_at)
 
-        written: list[Path] = []
-        if self.config.observation:
-            obs_path = segment_path.with_suffix(".obs")
-            result = self._obs_writer.write(obs_path, self.station, self.epochs, generated_at, self.marker_name)
-            if result is not None:
-                written.append(result)
-        if self.config.navigation:
-            nav_path = segment_path.with_suffix(".nav")
-            result = self._nav_writer.write(nav_path, list(self._ephemerides.values()), generated_at)
-            if result is not None:
-                written.append(result)
-        return written
+    def detach_snapshot(self, preserve_station: bool = True) -> RinexSegmentSnapshot | None:
+        if self.empty():
+            return None
+        snapshot = RinexSegmentSnapshot(
+            config=self.config,
+            marker_name=self.marker_name,
+            station=self.station,
+            epochs=self.epochs,
+            ephemerides=self._ephemerides,
+        )
+        if not preserve_station:
+            self.station = None
+        self.epochs = []
+        self._ephemerides = {}
+        return snapshot
 
     def reset(self, preserve_station: bool = True) -> None:
         if not preserve_station:

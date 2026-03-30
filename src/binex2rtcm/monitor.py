@@ -40,28 +40,22 @@ class ConsoleMonitor:
             "[inputs]",
         ]
         for item in self._stats.inputs.values():
-            lines.extend(
-                [
-                    (
-                        f"- {item.name} [{item.session}] ({item.kind}) status={self._status(item.last_activity_monotonic)} "
-                        f"bytes={item.bytes_in} chunks={item.chunks_in} frames={item.binex_frames} "
-                        f"epochs={item.epochs} eph={item.ephemerides} rtcm={item.rtcm_messages} "
-                        f"capture={item.capture_bytes} ignored={item.ignored_records} errors={item.errors}"
-                    ),
-                    f"  last_error: {item.last_error}" if item.last_error else "  last_error: -",
-                ]
+            lines.append(
+                (
+                    f"- {item.name} [{item.session}] ({item.kind}) status={self._status(item.last_activity_monotonic)} "
+                    f"bytes={item.bytes_in} chunks={item.chunks_in} frames={item.binex_frames} "
+                    f"epochs={item.epochs} eph={item.ephemerides} rtcm={item.rtcm_messages} "
+                    f"capture={item.capture_bytes} ignored={item.ignored_records} errors={item.errors}"
+                )
             )
         lines.append("")
         lines.append("[outputs]")
         for item in self._stats.outputs.values():
-            lines.extend(
-                [
-                    (
-                        f"- {item.name} [{item.session}] ({item.kind}) status={self._status(item.last_activity_monotonic)} "
-                        f"bytes={item.bytes_out} writes={item.writes} errors={item.errors}"
-                    ),
-                    f"  last_error: {item.last_error}" if item.last_error else "  last_error: -",
-                ]
+            lines.append(
+                (
+                    f"- {item.name} [{item.session}] ({item.kind}) status={self._status(item.last_activity_monotonic)} "
+                    f"bytes={item.bytes_out} writes={item.writes} errors={item.errors}"
+                )
             )
         text = "\n".join(lines)
         if sys.stdout.isatty():

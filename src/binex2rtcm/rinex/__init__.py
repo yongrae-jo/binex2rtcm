@@ -1,7 +1,14 @@
 """RINEX writers and segment buffers."""
 
+from .async_export import BackgroundRinexExporter
 from .nav_writer import RinexNavWriter
 from .obs_writer import RinexObsWriter
-from .segment import RinexSegmentBuffer
+from .segment import RinexSegmentBuffer, RinexSegmentSnapshot
 
-__all__ = ["RinexNavWriter", "RinexObsWriter", "RinexSegmentBuffer"]
+__all__ = [
+    "BackgroundRinexExporter",
+    "RinexNavWriter",
+    "RinexObsWriter",
+    "RinexSegmentBuffer",
+    "RinexSegmentSnapshot",
+]

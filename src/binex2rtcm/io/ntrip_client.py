@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 from ..config import InputConfig
 from ..errors import StreamError
+from ..logging_utils import append_input_error
 from .base import InputAdapter
 
 LOGGER = logging.getLogger(__name__)
@@ -129,6 +130,7 @@ class NtripClientInput(InputAdapter):
             except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
                 raise
             except Exception as exc:
+                append_input_error(self._config, "WARNING", f"NTRIP reconnect after error: {exc}")
                 LOGGER.warning("NTRIP reconnect after error: %s", exc)
                 yield b""
                 await asyncio.sleep(self._config.reconnect_delay_s)

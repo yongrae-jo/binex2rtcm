@@ -189,6 +189,8 @@ def _validate_config(app: AppConfig) -> None:
     output_sessions = {item.session or "default" for item in app.outputs}
     if len(app.inputs) > 1 and any(item.session is None for item in app.inputs):
         raise ConfigurationError("When multiple inputs are configured, every input must declare session")
+    if not app.outputs:
+        return
     if len(input_sessions) > 1 and any(item.session is None for item in app.outputs):
         raise ConfigurationError("When multiple sessions are configured, every output must declare session")
     missing_output_sessions = sorted(input_sessions - output_sessions)
@@ -284,8 +286,6 @@ def load_config(path: str | Path) -> AppConfig:
 
     if not app.inputs:
         raise ConfigurationError("At least one input must be configured")
-    if not app.outputs:
-        raise ConfigurationError("At least one output must be configured")
 
     _validate_config(app)
     return app
