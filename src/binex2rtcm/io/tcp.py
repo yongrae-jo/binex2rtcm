@@ -10,6 +10,10 @@ from ..config import InputConfig, OutputConfig
 from ..errors import StreamError
 from ..logging_utils import append_input_error
 from .base import InputAdapter, QueuedOutputAdapter
+from .reconnect import (
+    RECONNECT_FAILURE_COOLDOWN_THRESHOLD,
+    next_reconnect_delay_s,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -19,6 +23,7 @@ class TcpClientInput(InputAdapter):
         self._config = config
 
     async def iter_chunks(self) -> AsyncIterator[bytes]:
+        consecutive_failures = 0
         while True:
             writer = None
             try:
@@ -26,6 +31,7 @@ class TcpClientInput(InputAdapter):
                     asyncio.open_connection(self._config.host, self._config.port),
                     timeout=self._config.connect_timeout_s,
                 )
+                consecutive_failures = 0
                 LOGGER.info("connected TCP input %s:%s", self._config.host, self._config.port)
                 while chunk := await reader.read(self._config.chunk_size):
                     yield chunk
@@ -33,10 +39,16 @@ class TcpClientInput(InputAdapter):
             except asyncio.CancelledError:  # pragma: no cover
                 raise
             except Exception as exc:
-                append_input_error(self._config, "WARNING", f"TCP input reconnect after error: {exc}")
-                LOGGER.warning("TCP input reconnect after error: %s", exc)
+                consecutive_failures += 1
+                delay_s = next_reconnect_delay_s(self._config.reconnect_delay_s, consecutive_failures)
+                cooldown_active = consecutive_failures >= RECONNECT_FAILURE_COOLDOWN_THRESHOLD
+                message = f"TCP input reconnect after error: {exc} (failure #{consecutive_failures}, retry in {delay_s:.0f}s)"
+                if cooldown_active:
+                    message += " after repeated failures"
+                append_input_error(self._config, "WARNING", message)
+                LOGGER.warning(message)
                 yield b""
-                await asyncio.sleep(self._config.reconnect_delay_s)
+                await asyncio.sleep(delay_s)
             finally:
                 try:
                     if writer is not None:

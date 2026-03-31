@@ -11,6 +11,10 @@ from ..config import InputConfig
 from ..errors import StreamError
 from ..logging_utils import append_input_error
 from .base import InputAdapter
+from .reconnect import (
+    RECONNECT_FAILURE_COOLDOWN_THRESHOLD,
+    next_reconnect_delay_s,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -104,6 +108,7 @@ class NtripClientInput(InputAdapter):
         self._config = config
 
     async def iter_chunks(self) -> AsyncIterator[bytes]:
+        consecutive_failures = 0
         while True:
             writer = None
             gga_task = None
@@ -123,6 +128,7 @@ class NtripClientInput(InputAdapter):
                 header, remainder = await self._read_header(reader)
                 if not ("200 OK" in header or header.startswith("ICY 200")):
                     raise StreamError(f"NTRIP connect failed: {header!r}")
+                consecutive_failures = 0
                 if self._config.send_nmea_gga and self._config.source_position_llh is not None:
                     gga_task = asyncio.create_task(self._gga_loop(writer), name="ntrip-gga")
                 async for chunk in self._iter_body(reader, header, remainder):
@@ -130,10 +136,19 @@ class NtripClientInput(InputAdapter):
             except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
                 raise
             except Exception as exc:
-                append_input_error(self._config, "WARNING", f"NTRIP reconnect after error: {exc}")
-                LOGGER.warning("NTRIP reconnect after error: %s", exc)
+                consecutive_failures += 1
+                delay_s = next_reconnect_delay_s(self._config.reconnect_delay_s, consecutive_failures)
+                cooldown_active = consecutive_failures >= RECONNECT_FAILURE_COOLDOWN_THRESHOLD
+                message = (
+                    f"NTRIP reconnect after error: {exc} "
+                    f"(failure #{consecutive_failures}, retry in {delay_s:.0f}s)"
+                )
+                if cooldown_active:
+                    message += " after repeated failures"
+                append_input_error(self._config, "WARNING", message)
+                LOGGER.warning(message)
                 yield b""
-                await asyncio.sleep(self._config.reconnect_delay_s)
+                await asyncio.sleep(delay_s)
             finally:
                 try:
                     if gga_task is not None:

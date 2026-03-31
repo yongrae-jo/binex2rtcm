@@ -88,7 +88,7 @@ def rinex_sat_sort_key(system: Constellation, prn: int) -> tuple[int, int, str]:
 def format_obs_epoch(time: GNSSTime, satellites: int, clock_offset_s: float | None = None) -> str:
     dt = time.datetime_gpst
     second = dt.second + dt.microsecond * 1e-6
-    base = f"> {dt.year:04d} {dt.month:02d} {dt.day:02d} {dt.hour:02d} {dt.minute:02d}{second:11.7f} 0{satellites:3d}"
+    base = f"> {dt.year:04d} {dt.month:02d} {dt.day:02d} {dt.hour:02d} {dt.minute:02d}{second:11.7f}  0{satellites:3d}"
     if clock_offset_s is None:
         return f"{base}{'':21s}\n"
     return f"{base}{clock_offset_s:21.12f}\n"
