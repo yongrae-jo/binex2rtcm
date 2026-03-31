@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 import logging
@@ -50,6 +51,33 @@ def _logical_time_from_payload(payload: object, fallback=None):
     if isinstance(payload, MsmMessage):
         return payload.epoch.time.datetime_gpst
     return fallback
+
+
+async def _run_cancellation_safe_cleanup(cleanup: Callable[[], Awaitable[None]]) -> None:
+    task = asyncio.current_task()
+    if task is None:
+        await cleanup()
+        return
+
+    pending_cancels = task.cancelling()
+    if pending_cancels <= 0:
+        await cleanup()
+        return
+
+    for _ in range(pending_cancels):
+        task.uncancel()
+    cleanup_task = asyncio.create_task(cleanup())
+    try:
+        while True:
+            try:
+                await asyncio.shield(cleanup_task)
+                break
+            except asyncio.CancelledError:
+                pending_cancels += 1
+                task.uncancel()
+    finally:
+        for _ in range(pending_cancels):
+            task.cancel()
 
 
 def _merge_epoch_observations(left: EpochObservations, right: EpochObservations) -> EpochObservations:
@@ -149,6 +177,7 @@ class ConversionService:
             asyncio.create_task(self._run_input_pipeline(input_config), name=f"input-{input_config.name}")
             for input_config in self._config.inputs
         ]
+        cancelled_error: asyncio.CancelledError | None = None
         try:
             if self._config.run_duration_s is None:
                 await asyncio.gather(*tasks)
@@ -162,17 +191,25 @@ class ConversionService:
                     await asyncio.gather(*pending, return_exceptions=True)
                 for task in done:
                     task.result()
+        except asyncio.CancelledError as exc:
+            cancelled_error = exc
         finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            if self._monitor is not None:
-                self._monitor.stop()
-            if monitor_task is not None:
-                with suppress(Exception):
-                    await monitor_task
-            for _, output in self._outputs:
-                await output.close()
+            async def finalize_run() -> None:
+                for task in tasks:
+                    if not task.done() and task.cancelling() == 0:
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if self._monitor is not None:
+                    self._monitor.stop()
+                if monitor_task is not None:
+                    with suppress(Exception):
+                        await monitor_task
+                for _, output in self._outputs:
+                    await output.close()
+
+            await _run_cancellation_safe_cleanup(finalize_run)
+        if cancelled_error is not None:
+            raise cancelled_error
 
     async def _run_input_pipeline(self, input_config: InputConfig) -> None:
         input_stats = self._stats.inputs[input_config.name]
@@ -305,15 +342,18 @@ class ConversionService:
             self._record_input_error(input_config, input_stats, "input pipeline failed", exc)
             raise
         finally:
-            try:
-                await flush_pending_epoch()
-            finally:
+            async def finalize_input() -> None:
                 try:
-                    if capture_log is not None:
-                        capture_log.close()
+                    await flush_pending_epoch()
                 finally:
-                    if capture_rinex_exporter is not None:
-                        await capture_rinex_exporter.close()
+                    try:
+                        if capture_log is not None:
+                            capture_log.close()
+                    finally:
+                        if capture_rinex_exporter is not None:
+                            await capture_rinex_exporter.close()
+
+            await _run_cancellation_safe_cleanup(finalize_input)
         if cancelled_error is not None:
             raise cancelled_error
 
