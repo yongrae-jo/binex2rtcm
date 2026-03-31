@@ -5,14 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import re
 
 from ..config import RinexExportConfig
 from ..model.ephemeris import Ephemeris, GlonassEphemeris, KeplerEphemeris, SbasEphemeris
 from ..model.observation import EpochObservations, SatelliteObservation
 from ..model.station import StationInfo
+from .crx import convert_observation_rnx_to_crx
 from .header import rinex_sat_sort_key
 from .nav_writer import RinexNavWriter
 from .obs_writer import RinexObsWriter
+
+_STAMPED_SEGMENT_RE = re.compile(r"^(?P<stem>.+)_(?P<tag>\d{8}_\d{6})$")
 
 
 def _ephemeris_key(eph: Ephemeris) -> tuple[object, ...]:
@@ -23,6 +27,26 @@ def _ephemeris_key(eph: Ephemeris) -> tuple[object, ...]:
     if isinstance(eph, SbasEphemeris):
         return (eph.system, eph.prn, eph.toe.gps_seconds, eph.tof.gps_seconds)
     return (eph.system, eph.prn, eph.toe.gps_seconds)
+
+
+def _segment_name_parts(segment_path: Path, generated_at: datetime | None = None) -> tuple[str, str]:
+    suffix = "".join(segment_path.suffixes)
+    base_name = segment_path.name[: -len(suffix)] if suffix else segment_path.name
+    match = _STAMPED_SEGMENT_RE.match(base_name)
+    if match is not None:
+        return match.group("stem"), match.group("tag")
+    time_tag = generated_at.strftime("%Y%m%d_%H%M%S") if generated_at is not None else datetime.now().strftime("%Y%m%d_%H%M%S")
+    return base_name, time_tag
+
+
+def build_rinex_artifact_path(
+    segment_path: Path,
+    file_code: str,
+    generated_at: datetime | None = None,
+    suffix: str = ".rnx",
+) -> Path:
+    stem, time_tag = _segment_name_parts(segment_path, generated_at)
+    return segment_path.with_name(f"{stem}_{file_code}_{time_tag}{suffix}")
 
 
 @dataclass(slots=True)
@@ -44,12 +68,16 @@ class RinexSegmentSnapshot:
 
         written: list[Path] = []
         if self.config.observation:
-            obs_path = segment_path.with_suffix(".obs")
+            obs_path = build_rinex_artifact_path(segment_path, "MO", generated_at)
             result = self._obs_writer.write(obs_path, self.station, self.epochs, generated_at, self.marker_name)
             if result is not None:
                 written.append(result)
+                if self.config.crx:
+                    crx_path = convert_observation_rnx_to_crx(result)
+                    if crx_path is not None:
+                        written.append(crx_path)
         if self.config.navigation:
-            nav_path = segment_path.with_suffix(".nav")
+            nav_path = build_rinex_artifact_path(segment_path, "MN", generated_at)
             result = self._nav_writer.write(nav_path, list(self.ephemerides.values()), generated_at)
             if result is not None:
                 written.append(result)

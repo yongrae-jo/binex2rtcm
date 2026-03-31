@@ -55,6 +55,7 @@ class RinexExportConfig:
     enabled: bool = False
     observation: bool = True
     navigation: bool = True
+    crx: bool = False
 
     @property
     def emits_any(self) -> bool:
@@ -125,6 +126,7 @@ def _as_rinex_export(value: object, field_name: str) -> RinexExportConfig:
         enabled=bool(value.get("enabled", False)),
         observation=bool(value.get("observation", True)),
         navigation=bool(value.get("navigation", True)),
+        crx=bool(value.get("crx", False)),
     )
 
 
@@ -206,8 +208,13 @@ def _validate_config(app: AppConfig) -> None:
 
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path)
-    with config_path.open("rb") as fp:
-        raw = tomllib.load(fp)
+    try:
+        with config_path.open("rb") as fp:
+            raw = tomllib.load(fp)
+    except (FileNotFoundError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigurationError(f"Configuration file not found: {config_path}") from exc
+    except OSError as exc:
+        raise ConfigurationError(f"Configuration file cannot be read: {config_path}") from exc
 
     app = AppConfig()
     app.logging_level = str(raw.get("logging", {}).get("level", app.logging_level))

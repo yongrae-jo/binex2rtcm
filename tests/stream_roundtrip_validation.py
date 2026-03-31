@@ -16,6 +16,7 @@ from binex2rtcm.binex.decoder import BinexDecoder
 from binex2rtcm.binex.encoder import BinexEncoder
 from binex2rtcm.binex.framer import BinexFramer
 from binex2rtcm.model.observation import EpochObservations, SatelliteObservation, SignalObservation
+from binex2rtcm.rinex import build_rinex_artifact_path
 
 OBS_FIELD_WIDTH = 16
 RINGO_RINEX_VERSION = "3.05"
@@ -831,8 +832,8 @@ def _validate_artifact(
     approx_time: str | None,
 ) -> ComparisonResult:
     artifact = _resolve_artifact(artifact_base)
-    internal_obs = artifact.with_suffix(".obs")
-    internal_nav = artifact.with_suffix(".nav")
+    internal_obs = build_rinex_artifact_path(artifact, "MO")
+    internal_nav = build_rinex_artifact_path(artifact, "MN")
     if not internal_obs.exists():
         raise SystemExit(f"Internal RINEX OBS artifact not found: {internal_obs}")
     output_stem = run.external_dir / backend / artifact_id

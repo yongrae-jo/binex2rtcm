@@ -3,7 +3,7 @@
 from .async_export import BackgroundRinexExporter
 from .nav_writer import RinexNavWriter
 from .obs_writer import RinexObsWriter
-from .segment import RinexSegmentBuffer, RinexSegmentSnapshot
+from .segment import RinexSegmentBuffer, RinexSegmentSnapshot, build_rinex_artifact_path
 
 __all__ = [
     "BackgroundRinexExporter",
@@ -11,4 +11,5 @@ __all__ = [
     "RinexObsWriter",
     "RinexSegmentBuffer",
     "RinexSegmentSnapshot",
+    "build_rinex_artifact_path",
 ]

@@ -42,7 +42,7 @@ SBS = 7
 # - reconnect_delay_s
 # - capture_path
 # - capture_interval: 5M | 10M | 15M | 30M | 1H | 24H
-# - capture_rinex: { enabled, observation, navigation }
+# - capture_rinex: { enabled, observation, navigation, crx }
 #
 # kind별 추가 항목:
 # - ntrip_client: host, port, mountpoint, username, password,
@@ -57,7 +57,7 @@ SBS = 7
 # - kind: file | tcp_server | tcp_client
 # - data_format: binex | rtcm
 # - max_queue
-# - rinex: { enabled, observation, navigation }  # file output 전용
+# - rinex: { enabled, observation, navigation, crx }  # file output 전용
 #
 # kind별 추가 항목:
 # - file: path, interval
@@ -87,7 +87,7 @@ replay_rate = 0
 #reconnect_delay_s = 5.0
 #capture_path = "runs/default/tcp-input.binex"
 #capture_interval = "10M"
-#capture_rinex = { enabled = true, observation = true, navigation = true }
+#capture_rinex = { enabled = true, observation = true, navigation = true, crx = false }
 
 # TCP client 출력 예시
 #[[outputs]]
@@ -105,7 +105,7 @@ session = "default"
 kind = "file"
 data_format = "rtcm"
 path = "runs/example/chul.rtcm3"
-rinex = { enabled = true, observation = true, navigation = true }
+rinex = { enabled = true, observation = true, navigation = true, crx = false }
 max_queue = 512
 
 # RTCM -> BINEX 파일 변환 예시 (`sample/CHUL_20260327_120000.rtcm3`)
@@ -124,7 +124,7 @@ max_queue = 512
 #data_format = "binex"
 #path = "runs/replay/output.bnx"
 #interval = "1H"
-#rinex = { enabled = true, observation = true, navigation = true }
+#rinex = { enabled = true, observation = true, navigation = true, crx = false }
 
 # 실시간 NTRIP 운영 예시
 #[[inputs]]
@@ -142,7 +142,7 @@ max_queue = 512
 #reconnect_delay_s = 5.0
 #capture_path = "runs/live/chul_input.bnx"
 #capture_interval = "1H"
-#capture_rinex = { enabled = true, observation = true, navigation = true }
+#capture_rinex = { enabled = true, observation = true, navigation = true, crx = false }
 #send_nmea_gga = false
 #
 #[[outputs]]
@@ -152,5 +152,5 @@ max_queue = 512
 #data_format = "rtcm"
 #path = "runs/live/chul.rtcm3"
 #interval = "1H"
-#rinex = { enabled = true, observation = true, navigation = true }
+#rinex = { enabled = true, observation = true, navigation = true, crx = false }
 #max_queue = 512

@@ -10,7 +10,7 @@
 - 포맷: `binex`, `rtcm`
 - 세션 단위 비동기 처리
 - GPST 기준 로그 분기와 파일명 타임스탬프
-- 입력/출력 로그의 내부 RINEX OBS/NAV 자동 생성
+- 입력/출력 로그의 내부 RINEX OBS/NAV 자동 생성과 선택적 OBS CRX 변환
 - 선택 의존성 `pyrtcm` 기반 RTCM self-check
 - `RINGO` 기반 외부 RINEX 비교 스크립트
 - 콘솔 실시간 모니터
@@ -88,6 +88,7 @@ python -m pip install -e ".[dev]"
 - `parse_with_pyrtcm = true`가 실제로 RTCM self-check를 수행하려면 `pyrtcm`이 설치되어 있어야 합니다.
 - `pyrtcm`이 없으면 프로그램은 계속 실행되지만 INFO 로그를 남기고 self-check를 비활성화합니다.
 - self-check가 필요하면 `python -m pip install -e ".[dev]"` 또는 `python -m pip install pyrtcm`을 사용하십시오.
+- OBS를 `.crx`로 함께 생성하려면 `tools/RNX2CRX`, `tools/rnx2crx` 또는 `PATH`에서 찾을 수 있는 `RNX2CRX` 계열 실행 파일이 필요합니다.
 
 ## 빠른 시작
 
@@ -134,7 +135,7 @@ session = "sample"
 kind = "file"
 data_format = "rtcm"
 path = "runs/sample/chul.rtcm3"
-rinex = { enabled = true, observation = true, navigation = true }
+rinex = { enabled = true, observation = true, navigation = true, crx = false }
 ```
 
 샘플 참고:
@@ -194,7 +195,7 @@ binex2rtcm --clear-runs --runs-dir runs
 | `reconnect_delay_s` | 재접속 대기 시간 | 네트워크 입력 |
 | `capture_path` | 입력 원본 로그 base path | 선택 |
 | `capture_interval` | 입력 로그 분기 주기 (`5M`, `10M`, `15M`, `30M`, `1H`, `24H`) | `capture_path` 사용 시 선택 |
-| `capture_rinex` | 입력 로그 세그먼트 종료 시 내부 RINEX 생성 옵션 | `capture_path` 사용 시 선택 |
+| `capture_rinex` | 입력 로그 세그먼트 종료 시 내부 RINEX 생성 옵션 (`enabled`, `observation`, `navigation`, `crx`) | `capture_path` 사용 시 선택 |
 | `send_nmea_gga` | NTRIP caster에 GGA 전송 여부 | `ntrip_client` |
 | `gga_interval_s` | GGA 전송 주기 | `ntrip_client` |
 | `source_position_llh` | GGA용 기준 위치 | `send_nmea_gga = true`일 때 필요 |
@@ -206,6 +207,7 @@ binex2rtcm --clear-runs --runs-dir runs
 
 - `capture_path`의 실제 저장 파일명은 첫 관측 epoch의 GPST를 기준으로 `_YYYYMMDD_HHMMSS`가 자동 부가됩니다.
 - `capture_path`의 raw 포맷은 해당 입력의 `data_format`을 그대로 따릅니다.
+- `capture_rinex.crx = true`이면 observation RINEX `.rnx`를 추가로 `.crx`로 변환합니다. 변환기가 없거나 실패하면 경고만 남기고 `.rnx`는 유지합니다.
 
 ### 출력 배열 `[[outputs]]`
 
@@ -218,13 +220,14 @@ binex2rtcm --clear-runs --runs-dir runs
 | `max_queue` | 출력 비동기 큐 크기 | 전체 |
 | `path`, `interval` | 파일 경로와 분기 주기 | `file` |
 | `host`, `port` | 네트워크 주소 | `tcp_server`, `tcp_client` |
-| `rinex` | 파일 출력 세그먼트 종료 시 내부 RINEX 생성 옵션 | `file` 전용 |
+| `rinex` | 파일 출력 세그먼트 종료 시 내부 RINEX 생성 옵션 (`enabled`, `observation`, `navigation`, `crx`) | `file` 전용 |
 
 설명:
 
 - `kind = "file"`와 `data_format = "binex"` 조합도 지원합니다.
 - `rinex`는 `file` 출력에만 적용됩니다.
 - 파일 출력도 실제 저장 시 `_YYYYMMDD_HHMMSS`가 붙은 세그먼트 파일로 생성됩니다.
+- `rinex.crx = true`이면 observation RINEX `.rnx`를 추가로 `.crx`로 변환합니다. navigation RINEX는 항상 `.rnx`를 유지합니다.
 - `interval`을 생략하면 종료 시점까지 단일 세그먼트 파일을 유지한 뒤 close합니다.
 
 ### 세션 규칙
@@ -255,13 +258,16 @@ binex2rtcm --clear-runs --runs-dir runs
 - 예를 들어 `10M`이면 `11:40:00`, `11:50:00`, `12:00:00` 경계에서 분기합니다.
 - 첫 세그먼트 이름은 첫 관측 epoch의 GPST, 이후 세그먼트는 회전 경계 GPST를 사용합니다.
 - 파일명 형식은 `YYYYMMDD_HHMMSS`입니다.
-- 프로그램 종료 시 마지막 세그먼트도 즉시 close되고 `.obs`, `.nav`가 함께 생성됩니다.
+- 프로그램 종료 시 마지막 세그먼트도 즉시 close되고 OBS는 `*_MO_YYYYMMDD_HHMMSS.rnx`, NAV는 `*_MN_YYYYMMDD_HHMMSS.rnx` 형식으로 생성됩니다.
+- `crx = true`이면 OBS `.rnx`와 함께 같은 basename의 `.crx`도 추가 생성됩니다.
 
 파일명 예:
 
 - 설정 경로: `runs/default/output.rtcm3`
 - 실제 세그먼트: `runs/default/output_20260326_114527.rtcm3`
-- 내부 RINEX: `runs/default/output_20260326_114527.obs`, `runs/default/output_20260326_114527.nav`
+- 내부 OBS RINEX: `runs/default/output_MO_20260326_114527.rnx`
+- 내부 NAV RINEX: `runs/default/output_MN_20260326_114527.rnx`
+- `crx = true`일 때 추가 OBS CRX: `runs/default/output_MO_20260326_114527.crx`
 
 ## 예시
 
@@ -280,7 +286,7 @@ username = "your-id"
 password = "your-password"
 capture_path = "runs/default/input.bnx"
 capture_interval = "10M"
-capture_rinex = { enabled = true, observation = true, navigation = true }
+capture_rinex = { enabled = true, observation = true, navigation = true, crx = false }
 
 [[outputs]]
 name = "default-server"
@@ -297,7 +303,7 @@ kind = "file"
 data_format = "rtcm"
 path = "runs/default/output.rtcm3"
 interval = "10M"
-rinex = { enabled = true, observation = true, navigation = true }
+rinex = { enabled = true, observation = true, navigation = true, crx = false }
 ```
 
 ### RTCM 파일 재생 -> BINEX 파일
@@ -318,7 +324,7 @@ kind = "file"
 data_format = "binex"
 path = "runs/replay/output.bnx"
 interval = "1H"
-rinex = { enabled = true, observation = true, navigation = true }
+rinex = { enabled = true, observation = true, navigation = true, crx = false }
 ```
 
 ### 다중 세션
@@ -336,7 +342,7 @@ username = "your-id"
 password = "your-password"
 capture_path = "runs/soul/input.bnx"
 capture_interval = "10M"
-capture_rinex = { enabled = true, observation = true, navigation = true }
+capture_rinex = { enabled = true, observation = true, navigation = true, crx = false }
 
 [[outputs]]
 name = "soul-server"
@@ -353,7 +359,7 @@ kind = "file"
 data_format = "rtcm"
 path = "runs/soul/output.rtcm3"
 interval = "10M"
-rinex = { enabled = true, observation = true, navigation = true }
+rinex = { enabled = true, observation = true, navigation = true, crx = false }
 
 [[inputs]]
 name = "yanj-ntrip"
@@ -367,7 +373,7 @@ username = "your-id"
 password = "your-password"
 capture_path = "runs/yanj/input.bnx"
 capture_interval = "10M"
-capture_rinex = { enabled = true, observation = true, navigation = true }
+capture_rinex = { enabled = true, observation = true, navigation = true, crx = false }
 
 [[outputs]]
 name = "yanj-log"
@@ -376,7 +382,7 @@ kind = "file"
 data_format = "binex"
 path = "runs/yanj/output.bnx"
 interval = "10M"
-rinex = { enabled = true, observation = true, navigation = true }
+rinex = { enabled = true, observation = true, navigation = true, crx = false }
 ```
 
 ## 라이브 모니터
@@ -400,6 +406,7 @@ binex2rtcm --config config/example.toml --monitor
 - `binex2rtcm: command not found`가 나오면 가상환경을 활성화했는지 확인하거나 `python -m binex2rtcm --config ...` 형태로 실행하십시오.
 - `pyrtcm is not installed; RTCM parse validation disabled` 로그가 나오면 `pyrtcm`을 추가 설치해야 self-check가 동작합니다.
 - 설정한 파일명과 실제 산출물 파일명이 다르면 GPST 기준 `_YYYYMMDD_HHMMSS` 접미사가 자동으로 붙는 동작인지 먼저 확인하십시오.
+- 설정 TOML 문법이 잘못되었거나 경로가 틀리면 `Configuration file not found: ...` 오류로 종료됩니다. 먼저 파일 경로와 TOML 문법을 함께 확인하십시오.
 - 상대 경로 입력이 기대와 다르면 명령을 실행한 현재 작업 디렉터리를 기준으로 다시 확인하십시오.
 - `split BDS epoch ... into 2 RTCM MSM messages ...`는 오류가 아니라 `INFO` 로그입니다. BDS 관측 한 epoch가 RTCM MSM mask slot 제한(`<= 64`)을 넘어서 여러 메시지로 나뉘었다는 뜻입니다.
 - 로그가 몇 초간 조용하다가 같은 초에 여러 줄이 몰려 보여도, 입력이 chunked/buffered 상태로 들어온 뒤 내부 큐가 빠르게 비워진 경우일 수 있습니다. `WARNING`, `ERROR`, `NTRIP reconnect after error:`가 없다면 우선 정상 동작으로 보는 편이 맞습니다.

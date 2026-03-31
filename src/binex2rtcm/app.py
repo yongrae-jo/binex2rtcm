@@ -7,8 +7,10 @@ import asyncio
 import logging
 from pathlib import Path
 import shutil
+import sys
 
 from .config import load_config
+from .errors import ConfigurationError
 from .logging_utils import configure_logging
 from .pipeline import ConversionService
 
@@ -72,6 +74,9 @@ def main(argv: list[str] | None = None) -> int:
                 monitor=args.monitor,
             )
         )
+    except ConfigurationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         LOGGER.info("shutdown requested by user")
         return 130
