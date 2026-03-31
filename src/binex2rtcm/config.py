@@ -63,6 +63,11 @@ class RinexExportConfig:
 
 
 @dataclass(slots=True)
+class Rnx2CrxConfig:
+    path: str | None = None
+
+
+@dataclass(slots=True)
 class SchedulerConfig:
     metadata_interval_s: float = 30.0
     ephemeris_interval_s: float = 300.0
@@ -92,6 +97,7 @@ class AppConfig:
     logging_level: str = "INFO"
     validate_rtcm: bool = True
     run_duration_s: float | None = None
+    rnx2crx: Rnx2CrxConfig = field(default_factory=Rnx2CrxConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     inputs: list[InputConfig] = field(default_factory=list)
@@ -130,7 +136,27 @@ def _as_rinex_export(value: object, field_name: str) -> RinexExportConfig:
     )
 
 
+def _as_rnx2crx_config(value: object) -> Rnx2CrxConfig:
+    if value is None:
+        return Rnx2CrxConfig()
+    if not isinstance(value, dict):
+        raise ConfigurationError("rnx2crx must be a table")
+    return Rnx2CrxConfig(path=_as_optional_str(value.get("path")))
+
+
+def _validate_rnx2crx_config(config: Rnx2CrxConfig) -> None:
+    if not config.path:
+        return
+    tool_path = Path(config.path).expanduser()
+    if tool_path.is_dir():
+        raise ConfigurationError("rnx2crx.path must point to a file, not a directory")
+    if not tool_path.is_file():
+        raise ConfigurationError(f"rnx2crx.path not found: {config.path}")
+
+
 def _validate_config(app: AppConfig) -> None:
+    _validate_rnx2crx_config(app.rnx2crx)
+
     input_names = {item.name for item in app.inputs}
     if len(input_names) != len(app.inputs):
         raise ConfigurationError("Input names must be unique")
@@ -219,6 +245,7 @@ def load_config(path: str | Path) -> AppConfig:
     app = AppConfig()
     app.logging_level = str(raw.get("logging", {}).get("level", app.logging_level))
     app.validate_rtcm = bool(raw.get("validation", {}).get("parse_with_pyrtcm", app.validate_rtcm))
+    app.rnx2crx = _as_rnx2crx_config(raw.get("rnx2crx"))
     runtime_raw = raw.get("runtime", {})
     if runtime_raw.get("duration_s") is not None:
         duration_s = float(runtime_raw["duration_s"])

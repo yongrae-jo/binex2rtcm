@@ -52,6 +52,7 @@ def build_rinex_artifact_path(
 @dataclass(slots=True)
 class RinexSegmentSnapshot:
     config: RinexExportConfig
+    rnx2crx_path: str | None = None
     marker_name: str = ""
     station: StationInfo | None = None
     epochs: list[EpochObservations] = field(default_factory=list)
@@ -73,7 +74,7 @@ class RinexSegmentSnapshot:
             if result is not None:
                 written.append(result)
                 if self.config.crx:
-                    crx_path = convert_observation_rnx_to_crx(result)
+                    crx_path = convert_observation_rnx_to_crx(result, self.rnx2crx_path)
                     if crx_path is not None:
                         written.append(crx_path)
         if self.config.navigation:
@@ -87,6 +88,7 @@ class RinexSegmentSnapshot:
 @dataclass(slots=True)
 class RinexSegmentBuffer:
     config: RinexExportConfig
+    rnx2crx_path: str | None = None
     marker_name: str = ""
     station: StationInfo | None = None
     epochs: list[EpochObservations] = field(default_factory=list)
@@ -113,6 +115,7 @@ class RinexSegmentBuffer:
     def export(self, segment_path: Path, generated_at: datetime | None = None) -> list[Path]:
         snapshot = RinexSegmentSnapshot(
             config=self.config,
+            rnx2crx_path=self.rnx2crx_path,
             marker_name=self.marker_name,
             station=self.station,
             epochs=list(self.epochs),
@@ -125,6 +128,7 @@ class RinexSegmentBuffer:
             return None
         snapshot = RinexSegmentSnapshot(
             config=self.config,
+            rnx2crx_path=self.rnx2crx_path,
             marker_name=self.marker_name,
             station=self.station,
             epochs=self.epochs,

@@ -39,7 +39,13 @@ def _candidate_tool_names() -> tuple[str, ...]:
     return _RNX2CRX_CANDIDATE_NAMES
 
 
-def resolve_rnx2crx_binary() -> Path | None:
+def resolve_rnx2crx_binary(configured_path: str | Path | None = None) -> Path | None:
+    if configured_path is not None:
+        candidate = Path(configured_path).expanduser()
+        if candidate.is_file():
+            return candidate
+        LOGGER.warning("configured RNX2CRX path not found: %s", candidate)
+        return None
     for directory in _candidate_tool_directories():
         for name in _candidate_tool_names():
             candidate = directory / name
@@ -63,8 +69,11 @@ def _resolve_crx_output_path(observation_rnx_path: Path) -> Path | None:
     return None
 
 
-def convert_observation_rnx_to_crx(observation_rnx_path: Path) -> Path | None:
-    binary_path = resolve_rnx2crx_binary()
+def convert_observation_rnx_to_crx(
+    observation_rnx_path: Path,
+    configured_path: str | Path | None = None,
+) -> Path | None:
+    binary_path = resolve_rnx2crx_binary(configured_path)
     if binary_path is None:
         LOGGER.warning(
             "RNX2CRX tool not found; leaving observation RINEX uncompressed: %s",

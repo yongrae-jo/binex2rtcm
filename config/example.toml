@@ -4,6 +4,9 @@ level = "INFO"
 [validation]
 parse_with_pyrtcm = true
 
+[rnx2crx]
+#path = "tools/RNXCMP_4.2.0_Windows_mingw_64bit/RNX2CRX.exe"
+
 # 기본값은 로컬 샘플 파일을 재생하는 오프라인 실행 예제입니다.
 # 실시간 NTRIP 운영용 설정은 이 파일을 복사해 별도 로컬 설정 파일에서 수정해서 사용하십시오.
 

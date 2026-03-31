@@ -89,6 +89,7 @@ python -m pip install -e ".[dev]"
 - `pyrtcm`이 없으면 프로그램은 계속 실행되지만 INFO 로그를 남기고 self-check를 비활성화합니다.
 - self-check가 필요하면 `python -m pip install -e ".[dev]"` 또는 `python -m pip install pyrtcm`을 사용하십시오.
 - OBS를 `.crx`로 함께 생성하려면 `tools/RNX2CRX`, `tools/rnx2crx` 또는 `PATH`에서 찾을 수 있는 `RNX2CRX` 계열 실행 파일이 필요합니다.
+- 자동 탐색 대신 TOML 상단의 `[rnx2crx]` 섹션에서 `path`로 실행 파일 경로를 직접 지정할 수 있습니다.
 
 ## 빠른 시작
 
@@ -121,6 +122,9 @@ binex2rtcm --config config/example.toml --monitor --duration 60
 예를 들어 BINEX 샘플 하나만 빠르게 재생해 보려면 다음과 같이 `file_replay` 입력을 만들면 됩니다.
 
 ```toml
+[rnx2crx]
+path = "tools/RNXCMP_4.2.0_Windows_mingw_64bit/RNX2CRX.exe"
+
 [[inputs]]
 name = "CHUL sample"
 session = "sample"
@@ -172,6 +176,7 @@ binex2rtcm --clear-runs --runs-dir runs
 | --- | --- | --- |
 | `[logging]` | `level` | 로그 레벨 |
 | `[validation]` | `parse_with_pyrtcm` | `pyrtcm` 설치 시 생성 RTCM을 즉시 재파싱해 형식 오류를 점검 |
+| `[rnx2crx]` | `path` | OBS `.crx` 변환에 사용할 `RNX2CRX` 실행 파일 경로 |
 | `[runtime]` | `duration_s` | 실행 제한 시간, `0` 또는 음수면 무기한 |
 | `[monitor]` | `enabled`, `interval_s` | 콘솔 모니터 사용 여부와 갱신 주기 |
 | `[scheduler]` | `metadata_interval_s`, `ephemeris_interval_s`, `emit_ephemeris_on_change`, `emit_metadata_on_start` | metadata, ephemeris, observation 재송출 정책 |
@@ -181,6 +186,7 @@ binex2rtcm --clear-runs --runs-dir runs
 
 - `parse_with_pyrtcm = true`여도 `pyrtcm`이 설치되지 않으면 INFO 로그 후 검증이 비활성화됩니다.
 - TOML의 상대 경로는 현재 작업 디렉터리 기준입니다.
+- `[rnx2crx].path`를 지정하면 `crx = true`인 모든 내부 OBS RINEX export가 해당 실행 파일을 공통 사용합니다.
 
 ### 입력 배열 `[[inputs]]`
 

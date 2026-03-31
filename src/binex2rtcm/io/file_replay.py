@@ -35,10 +35,14 @@ class FileReplayInput(InputAdapter):
 
 
 class FileOutput(QueuedOutputAdapter):
-    def __init__(self, config: OutputConfig) -> None:
+    def __init__(self, config: OutputConfig, rnx2crx_path: str | None = None) -> None:
         super().__init__(config.max_queue)
         marker_name = config.session or config.name
-        self._rinex = RinexSegmentBuffer(config.rinex, marker_name=marker_name) if config.rinex.enabled else None
+        self._rinex = (
+            RinexSegmentBuffer(config.rinex, rnx2crx_path=rnx2crx_path, marker_name=marker_name)
+            if config.rinex.enabled
+            else None
+        )
         self._rinex_exporter = BackgroundRinexExporter(f"output-{config.name}") if self._rinex is not None else None
         self._data_format = config.data_format.strip().lower()
         self._framer = None

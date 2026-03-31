@@ -184,7 +184,11 @@ class ConversionService:
         capture_rinex = None
         capture_rinex_exporter = None
         if input_config.capture_path and input_config.capture_rinex.enabled:
-            capture_rinex = RinexSegmentBuffer(input_config.capture_rinex, marker_name=input_config.session or input_config.name)
+            capture_rinex = RinexSegmentBuffer(
+                input_config.capture_rinex,
+                rnx2crx_path=self._config.rnx2crx.path,
+                marker_name=input_config.session or input_config.name,
+            )
             capture_rinex_exporter = BackgroundRinexExporter(
                 f"input-{input_config.name}",
                 on_error=lambda exc: self._handle_capture_rinex_error(input_config, input_stats, exc),
@@ -506,7 +510,7 @@ class ConversionService:
         if kind == "tcp_client":
             return TcpClientOutput(config)
         if kind == "file":
-            return FileOutput(config)
+            return FileOutput(config, self._config.rnx2crx.path)
         raise ValueError(f"Unsupported output kind: {config.kind}")
 
     def _session_name(self, session: str | None) -> str:
