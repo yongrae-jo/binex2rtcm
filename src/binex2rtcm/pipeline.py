@@ -90,7 +90,9 @@ def _merge_epoch_observations(left: EpochObservations, right: EpochObservations)
             continue
         signal_map = {signal.signal_label: signal for signal in current.signals}
         for signal in source.signals:
-            signal_map[signal.signal_label] = signal
+            existing = signal_map.get(signal.signal_label)
+            if existing is None or signal.source_priority >= existing.source_priority:
+                signal_map[signal.signal_label] = signal
         satellites[key] = SatelliteObservation(
             system=source.system,
             prn=source.prn,

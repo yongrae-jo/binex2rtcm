@@ -17,6 +17,7 @@ class SignalObservation:
     doppler_hz: float
     cnr_dbhz: float
     frequency_slot: int
+    source_priority: int = 0
     lock_time_s: float = 0.0
     half_cycle_ambiguity: bool = False
     slip_detected: bool = False

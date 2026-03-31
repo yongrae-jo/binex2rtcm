@@ -71,6 +71,7 @@ SIGNAL_MAP: dict[Constellation, dict[str, SignalDefinition]] = {
         "1M": SignalDefinition("1M", "L1", 6, 1, 1575.42e6),
         "2C": SignalDefinition("2C", "L2", 8, 2, 1227.60e6),
         "2P": SignalDefinition("2P", "L2", 9, 2, 1227.60e6),
+        "2D": SignalDefinition("2D", "L2", 9, 2, 1227.60e6),
         "2W": SignalDefinition("2W", "L2", 10, 2, 1227.60e6),
         "2Y": SignalDefinition("2Y", "L2", 11, 2, 1227.60e6),
         "2M": SignalDefinition("2M", "L2", 12, 2, 1227.60e6),

@@ -22,6 +22,9 @@ from ..model.station import StationInfo
 
 SC2RAD = math.pi
 RANGE_MS = CLIGHT * 0.001
+RANGE_MS_GLO = CLIGHT * 0.002
+LEGACY_SIGNAL_PRIORITY = 1
+MSM_SIGNAL_PRIORITY = 2
 P2_5 = 2.0 ** -5
 P2_6 = 2.0 ** -6
 P2_10 = 2.0 ** -10
@@ -125,7 +128,8 @@ class RtcmDecoder:
         self._reference_time = reference_time or _reference_time()
         self._station_id = station_id
         self._station_meta: dict[str, object] = {}
-        self._lock_values: dict[tuple[Constellation, int, str], int] = {}
+        self._lock_values: dict[tuple[str, Constellation, int, str], int] = {}
+        self._carrier_phases: dict[tuple[str, Constellation, int, str], float] = {}
         self._last_epoch_time: dict[Constellation, GNSSTime] = {}
 
     def decode(self, frame: bytes) -> list[object]:
@@ -154,6 +158,10 @@ class RtcmDecoder:
             return [self._decode_1044(reader)]
         if message_type == 1045:
             return [self._decode_1045(reader)]
+        if message_type == 1004:
+            return [self._decode_1004(reader)]
+        if message_type == 1012:
+            return [self._decode_1012(reader)]
         if message_type == 1230:
             return []
         if 1071 <= message_type <= 1137:
@@ -228,6 +236,290 @@ class RtcmDecoder:
 
     def _reference_week(self) -> int | None:
         return self._reference_time.gps_week_tow()[0] if self._reference_time else None
+
+    def _decode_legacy_gps_epoch(self, tow_ms: int) -> GNSSTime:
+        reference = self._last_epoch_time.get(Constellation.GPS, self._reference_time)
+        tow = tow_ms * 0.001
+        return GNSSTime(adjust_week(reference.gps_seconds, tow))
+
+    def _decode_legacy_glonass_epoch(self, tod_ms: int) -> GNSSTime:
+        reference = self._last_epoch_time.get(Constellation.GLO, self._reference_time)
+        tod = tod_ms * 0.001
+        ref_local = reference.datetime_utc + timedelta(hours=3)
+        tod_prev = (
+            ref_local.hour * 3600.0
+            + ref_local.minute * 60.0
+            + ref_local.second
+            + ref_local.microsecond * 1e-6
+        )
+        if tod < tod_prev - 43200.0:
+            tod += 86400.0
+        elif tod > tod_prev + 43200.0:
+            tod -= 86400.0
+        local_midnight = datetime.combine(ref_local.date(), time(0, 0), tzinfo=UTC)
+        local_time = local_midnight + timedelta(seconds=tod)
+        return GNSSTime(utc_to_gpst_seconds(local_time - timedelta(hours=3)))
+
+    def _update_epoch_reference(self, system: Constellation, epoch_time: GNSSTime) -> None:
+        self._last_epoch_time[system] = epoch_time
+        self._reference_time = epoch_time
+
+    def _legacy_phase_cycles(
+        self,
+        source_family: str,
+        system: Constellation,
+        prn: int,
+        label: str,
+        phase_range_m: int,
+        wavelength: float,
+    ) -> float:
+        if wavelength <= 0.0:
+            return 0.0
+        cycles = phase_range_m * 0.0005 / wavelength
+        phase_key = (source_family, system, prn, label)
+        previous_cycles = self._carrier_phases.get(phase_key)
+        if previous_cycles is not None:
+            if cycles < previous_cycles - 750.0:
+                cycles += 1500.0
+            elif cycles > previous_cycles + 750.0:
+                cycles -= 1500.0
+        self._carrier_phases[phase_key] = cycles
+        return cycles
+
+    def _legacy_slip_detected(
+        self,
+        source_family: str,
+        system: Constellation,
+        prn: int,
+        label: str,
+        lock: int,
+    ) -> bool:
+        phase_key = (source_family, system, prn, label)
+        previous_lock = self._lock_values.get(phase_key)
+        slip = previous_lock is not None and lock < previous_lock
+        self._lock_values[phase_key] = lock
+        return slip
+
+    def _gps_legacy_l1_label(self, code_indicator: int) -> str:
+        return "1P" if code_indicator else "1C"
+
+    def _gps_legacy_l2_label(self, code_indicator: int) -> str:
+        return {0: "2X", 1: "2P", 2: "2D", 3: "2W"}[code_indicator]
+
+    def _glonass_legacy_l1_label(self, code_indicator: int) -> str:
+        return "1P" if code_indicator else "1C"
+
+    def _glonass_legacy_l2_label(self, code_indicator: int) -> str:
+        return "2P" if code_indicator else "2C"
+
+    def _decode_1004(self, reader: _BitReader) -> EpochObservations:
+        reader.unsigned(12)
+        tow_ms = reader.unsigned(30)
+        reader.unsigned(1)
+        satellite_count = reader.unsigned(5)
+        reader.unsigned(1)
+        reader.unsigned(3)
+
+        epoch_time = self._decode_legacy_gps_epoch(tow_ms)
+        satellites: list[SatelliteObservation] = []
+        for _ in range(satellite_count):
+            prn = reader.unsigned(6)
+            code1 = reader.unsigned(1)
+            l1_pseudorange_raw = reader.unsigned(24)
+            l1_phase_range = reader.signed(20)
+            l1_lock = reader.unsigned(7)
+            ambiguity = reader.unsigned(8)
+            l1_cnr = reader.unsigned(8)
+            code2 = reader.unsigned(2)
+            l2_pseudorange_delta = reader.signed(14)
+            l2_phase_range = reader.signed(20)
+            l2_lock = reader.unsigned(7)
+            l2_cnr = reader.unsigned(8)
+
+            if not (1 <= prn <= 32):
+                continue
+
+            l1_label = self._gps_legacy_l1_label(code1)
+            l2_label = self._gps_legacy_l2_label(code2)
+            l1_wavelength = wavelength_m(Constellation.GPS, l1_label)
+            l2_wavelength = wavelength_m(Constellation.GPS, l2_label)
+            l1_pseudorange = l1_pseudorange_raw * 0.02 + ambiguity * RANGE_MS
+            signals: list[SignalObservation] = []
+
+            l1_carrier = 0.0
+            if l1_phase_range != -524288:
+                l1_carrier = (
+                    l1_pseudorange / l1_wavelength
+                    + self._legacy_phase_cycles(
+                        "legacy",
+                        Constellation.GPS,
+                        prn,
+                        l1_label,
+                        l1_phase_range,
+                        l1_wavelength,
+                    )
+                )
+            l1_slip = self._legacy_slip_detected("legacy", Constellation.GPS, prn, l1_label, l1_lock)
+            signals.append(
+                SignalObservation(
+                    signal_label=l1_label,
+                    pseudorange_m=l1_pseudorange,
+                    carrier_cycles=l1_carrier,
+                    doppler_hz=0.0,
+                    cnr_dbhz=l1_cnr * 0.25,
+                    frequency_slot=signal_definition(Constellation.GPS, l1_label).slot,
+                    source_priority=LEGACY_SIGNAL_PRIORITY,
+                    slip_detected=l1_slip,
+                    lli=1 if l1_slip else 0,
+                )
+            )
+
+            l2_pseudorange = 0.0
+            if l2_pseudorange_delta != -8192:
+                l2_pseudorange = l1_pseudorange + l2_pseudorange_delta * 0.02
+
+            l2_carrier = 0.0
+            if l2_phase_range != -524288:
+                l2_carrier = (
+                    l1_pseudorange / l2_wavelength
+                    + self._legacy_phase_cycles(
+                        "legacy",
+                        Constellation.GPS,
+                        prn,
+                        l2_label,
+                        l2_phase_range,
+                        l2_wavelength,
+                    )
+                )
+            l2_slip = self._legacy_slip_detected("legacy", Constellation.GPS, prn, l2_label, l2_lock)
+            signals.append(
+                SignalObservation(
+                    signal_label=l2_label,
+                    pseudorange_m=l2_pseudorange,
+                    carrier_cycles=l2_carrier,
+                    doppler_hz=0.0,
+                    cnr_dbhz=l2_cnr * 0.25,
+                    frequency_slot=signal_definition(Constellation.GPS, l2_label).slot,
+                    source_priority=LEGACY_SIGNAL_PRIORITY,
+                    slip_detected=l2_slip,
+                    lli=1 if l2_slip else 0,
+                )
+            )
+
+            satellites.append(SatelliteObservation(system=Constellation.GPS, prn=prn, signals=signals))
+
+        epoch = EpochObservations(time=epoch_time, satellites=satellites)
+        self._update_epoch_reference(Constellation.GPS, epoch_time)
+        return epoch
+
+    def _decode_1012(self, reader: _BitReader) -> EpochObservations:
+        reader.unsigned(12)
+        tod_ms = reader.unsigned(27)
+        reader.unsigned(1)
+        satellite_count = reader.unsigned(5)
+        reader.unsigned(1)
+        reader.unsigned(3)
+
+        epoch_time = self._decode_legacy_glonass_epoch(tod_ms)
+        satellites: list[SatelliteObservation] = []
+        for _ in range(satellite_count):
+            prn = reader.unsigned(6)
+            code1 = reader.unsigned(1)
+            frequency_channel_raw = reader.unsigned(5)
+            l1_pseudorange_raw = reader.unsigned(25)
+            l1_phase_range = reader.signed(20)
+            l1_lock = reader.unsigned(7)
+            ambiguity = reader.unsigned(7)
+            l1_cnr = reader.unsigned(8)
+            code2 = reader.unsigned(2)
+            l2_pseudorange_delta = reader.signed(14)
+            l2_phase_range = reader.signed(20)
+            l2_lock = reader.unsigned(7)
+            l2_cnr = reader.unsigned(8)
+
+            if not (1 <= prn <= 24):
+                continue
+
+            glonass_fcn = frequency_channel_raw - 7
+            l1_label = self._glonass_legacy_l1_label(code1)
+            l2_label = self._glonass_legacy_l2_label(code2)
+            l1_wavelength = wavelength_m(Constellation.GLO, l1_label, glonass_fcn)
+            l2_wavelength = wavelength_m(Constellation.GLO, l2_label, glonass_fcn)
+            l1_pseudorange = l1_pseudorange_raw * 0.02 + ambiguity * RANGE_MS_GLO
+            signals: list[SignalObservation] = []
+
+            l1_carrier = 0.0
+            if l1_phase_range != -524288:
+                l1_carrier = (
+                    l1_pseudorange / l1_wavelength
+                    + self._legacy_phase_cycles(
+                        "legacy",
+                        Constellation.GLO,
+                        prn,
+                        l1_label,
+                        l1_phase_range,
+                        l1_wavelength,
+                    )
+                )
+            l1_slip = self._legacy_slip_detected("legacy", Constellation.GLO, prn, l1_label, l1_lock)
+            signals.append(
+                SignalObservation(
+                    signal_label=l1_label,
+                    pseudorange_m=l1_pseudorange,
+                    carrier_cycles=l1_carrier,
+                    doppler_hz=0.0,
+                    cnr_dbhz=l1_cnr * 0.25,
+                    frequency_slot=signal_definition(Constellation.GLO, l1_label).slot,
+                    source_priority=LEGACY_SIGNAL_PRIORITY,
+                    slip_detected=l1_slip,
+                    lli=1 if l1_slip else 0,
+                )
+            )
+
+            l2_pseudorange = 0.0
+            if l2_pseudorange_delta != -8192:
+                l2_pseudorange = l1_pseudorange + l2_pseudorange_delta * 0.02
+
+            l2_carrier = 0.0
+            if l2_phase_range != -524288:
+                l2_carrier = (
+                    l1_pseudorange / l2_wavelength
+                    + self._legacy_phase_cycles(
+                        "legacy",
+                        Constellation.GLO,
+                        prn,
+                        l2_label,
+                        l2_phase_range,
+                        l2_wavelength,
+                    )
+                )
+            l2_slip = self._legacy_slip_detected("legacy", Constellation.GLO, prn, l2_label, l2_lock)
+            signals.append(
+                SignalObservation(
+                    signal_label=l2_label,
+                    pseudorange_m=l2_pseudorange,
+                    carrier_cycles=l2_carrier,
+                    doppler_hz=0.0,
+                    cnr_dbhz=l2_cnr * 0.25,
+                    frequency_slot=signal_definition(Constellation.GLO, l2_label).slot,
+                    source_priority=LEGACY_SIGNAL_PRIORITY,
+                    slip_detected=l2_slip,
+                    lli=1 if l2_slip else 0,
+                )
+            )
+
+            satellites.append(
+                SatelliteObservation(
+                    system=Constellation.GLO,
+                    prn=prn,
+                    signals=signals,
+                    glonass_fcn=glonass_fcn,
+                )
+            )
+
+        epoch = EpochObservations(time=epoch_time, satellites=satellites)
+        self._update_epoch_reference(Constellation.GLO, epoch_time)
+        return epoch
 
     def _decode_1019(self, reader: _BitReader) -> KeplerEphemeris:
         prn = reader.unsigned(6)
@@ -686,7 +978,7 @@ class RtcmDecoder:
                     doppler_hz = -range_rate / lam
 
                 cnr_dbhz = cnr[cell_index] * cnr_scale
-                phase_key = (system, sat_id, label)
+                phase_key = ("msm", system, sat_id, label)
                 previous_lock = self._lock_values.get(phase_key)
                 slip = previous_lock is not None and lock[cell_index] < previous_lock
                 self._lock_values[phase_key] = lock[cell_index]
@@ -699,6 +991,7 @@ class RtcmDecoder:
                         doppler_hz=doppler_hz,
                         cnr_dbhz=cnr_dbhz,
                         frequency_slot=signal_definition(system, label).slot,
+                        source_priority=MSM_SIGNAL_PRIORITY,
                         half_cycle_ambiguity=bool(half[cell_index]),
                         slip_detected=slip,
                         lli=lli,
@@ -715,6 +1008,5 @@ class RtcmDecoder:
             satellites.append(SatelliteObservation(system=system, prn=prn, signals=signals, glonass_fcn=glonass_fcn[sat_index]))
 
         epoch = EpochObservations(time=epoch_time, satellites=satellites)
-        self._last_epoch_time[system] = epoch_time
-        self._reference_time = epoch_time
+        self._update_epoch_reference(system, epoch_time)
         return epoch

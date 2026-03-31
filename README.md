@@ -50,7 +50,9 @@
 - station metadata: `1006`, `1008`, `1033`
 - GLONASS code-phase bias: `1230`
 - broadcast ephemeris: `1019`, `1020`, `1042`, `1044`, `1045`
-- observations: `MSM4`, `MSM5`, `MSM6`, `MSM7`
+- input observations: `1004`, `1012`, `MSM4`, `MSM5`, `MSM6`, `MSM7`
+- output observations: `MSM4`, `MSM5`, `MSM6`, `MSM7`
+- 같은 epoch에 legacy RTK(`1004`, `1012`)와 `MSM`이 함께 들어오면 같은 위성의 같은 `signal_label`에서는 `MSM` 값을 우선 사용하고, `MSM`에 없는 legacy signal만 유지합니다.
 
 ## 설치
 
@@ -198,7 +200,7 @@ binex2rtcm --clear-runs --runs-dir runs
 | `data_format` | `binex` 또는 `rtcm` | 전체 |
 | `chunk_size` | read 단위 바이트 수 | 전체 |
 | `connect_timeout_s` | 연결 타임아웃 | 네트워크 입력 |
-| `reconnect_delay_s` | 재접속 대기 시간 | 네트워크 입력 |
+| `reconnect_delay_s` | 기본 재접속 대기 시간. 연속 실패 5회 이상이면 다음 재시도부터 1시간 대기 | 네트워크 입력 |
 | `capture_path` | 입력 원본 로그 base path | 선택 |
 | `capture_interval` | 입력 로그 분기 주기 (`5M`, `10M`, `15M`, `30M`, `1H`, `24H`) | `capture_path` 사용 시 선택 |
 | `capture_rinex` | 입력 로그 세그먼트 종료 시 내부 RINEX 생성 옵션 (`enabled`, `observation`, `navigation`, `crx`) | `capture_path` 사용 시 선택 |
@@ -251,6 +253,12 @@ binex2rtcm --clear-runs --runs-dir runs
 - BINEX 입력에서는 `0x00` site metadata를 사용합니다.
 - RTCM 입력에서는 `1006`, `1008`, `1033`을 사용합니다.
 - RTCM 출력의 `Reference Station ID`는 항상 `0`으로 고정됩니다.
+
+### RTCM 관측 병합
+
+- `1004`, `1012`는 decode-only 입력 지원입니다. RTCM 출력 관측은 계속 `MSM4`에서 `MSM7`만 사용합니다.
+- 같은 epoch에서 `1004`/`1012`와 `MSM`이 동시에 들어오면, 같은 위성의 같은 `signal_label`은 `MSM`이 우선합니다.
+- 같은 epoch에서 `MSM`에 없는 legacy signal은 그대로 유지해 OBS RINEX에 반영합니다.
 
 ### RTCM 1230
 
@@ -391,6 +399,65 @@ interval = "10M"
 rinex = { enabled = true, observation = true, navigation = true, crx = false }
 ```
 
+### SOUL RTCM 3.1 / 3.2 60초 비교
+
+`SOUL-RTCM31`은 legacy RTK(`1004`, `1012`) 중심, `SOUL-RTCM32`는 `MSM` 중심 스트림입니다. 두 스트림을 60초 동안 동시에 받아 OBS 생성 여부와 값을 비교하려면 입력 `capture_rinex`를 켜는 구성이 가장 단순합니다.
+
+```toml
+[[inputs]]
+name = "SOUL RTCM31"
+session = "SOUL31"
+kind = "ntrip_client"
+data_format = "rtcm"
+host = "gnssdata.or.kr"
+port = 2101
+mountpoint = "SOUL-RTCM31"
+username = "your-id"
+password = "your-password"
+capture_path = "runs/validation/SOUL31/input.rtcm3"
+capture_rinex = { enabled = true, observation = true, navigation = false, crx = false }
+
+[[outputs]]
+name = "SOUL31 log"
+session = "SOUL31"
+kind = "file"
+data_format = "rtcm"
+path = "runs/validation/SOUL31/output.rtcm3"
+
+[[inputs]]
+name = "SOUL RTCM32"
+session = "SOUL32"
+kind = "ntrip_client"
+data_format = "rtcm"
+host = "gnssdata.or.kr"
+port = 2101
+mountpoint = "SOUL-RTCM32"
+username = "your-id"
+password = "your-password"
+capture_path = "runs/validation/SOUL32/input.rtcm3"
+capture_rinex = { enabled = true, observation = true, navigation = false, crx = false }
+
+[[outputs]]
+name = "SOUL32 log"
+session = "SOUL32"
+kind = "file"
+data_format = "rtcm"
+path = "runs/validation/SOUL32/output.rtcm3"
+```
+
+실행 예:
+
+```bash
+binex2rtcm --config config/SOUL_RTCM_COMPARE.local.toml --duration 60
+```
+
+비교 포인트:
+
+- OBS 생성 여부: `runs/validation/SOUL31/input_MO_*.rnx`, `runs/validation/SOUL32/input_MO_*.rnx`
+- epoch 수와 GPS/GLO 위성 행 수
+- 공통 `signal_label`의 `C`, `L`, `S` 값 차이
+- `SOUL-RTCM32`에서는 보통 `GAL`, `BDS`, `QZS` 같은 추가 constellation이 함께 보일 수 있음
+
 ## 라이브 모니터
 
 모니터를 활성화하면 세션별 입력/출력 상태를 주기적으로 표시합니다.
@@ -432,6 +499,7 @@ binex2rtcm --config config/example.toml --monitor
 - `1041` NavIC/IRNSS ephemeris는 아직 구현하지 않았습니다.
 - `1043`은 RTCM 3.3 기준 정의된 broadcast ephemeris 메시지가 아니므로 지원하지 않습니다.
 - IRNSS MSM signal map은 최소 범위만 포함하며 현재 `5A` 중심입니다.
+- RTCM observation encoder는 현재 `MSM4`에서 `MSM7`만 송출합니다. `1004`, `1012`는 입력 decode-only 지원입니다.
 - 라이브 BINEX 스트림에서 실제로 소비하는 레코드는 `0x00`, `0x01-01..06`, `0x01-14`, `0x7D-00`, `0x7F-05`입니다.
 - BINEX 출력은 위 decoded subset만 재구성하며 vendor-specific 추가 레코드는 보존하지 않습니다.
 - `0x01-14`는 upgraded Galileo ephemeris로 받아들이며 현재 프로젝트에서는 공통 Galileo decoded layout로 정규화합니다.
