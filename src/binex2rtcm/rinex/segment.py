@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 
 from ..config import RinexExportConfig
-from ..model.ephemeris import Ephemeris, GlonassEphemeris, KeplerEphemeris, SbasEphemeris
+from ..model.ephemeris import Ephemeris, ephemeris_identity
 from ..model.observation import EpochObservations, SatelliteObservation
 from ..model.station import StationInfo
 from .crx import convert_observation_rnx_to_crx
@@ -20,13 +20,7 @@ _STAMPED_SEGMENT_RE = re.compile(r"^(?P<stem>.+)_(?P<tag>\d{8}_\d{6})$")
 
 
 def _ephemeris_key(eph: Ephemeris) -> tuple[object, ...]:
-    if isinstance(eph, KeplerEphemeris):
-        return (eph.system, eph.prn, eph.week, eph.toes, eph.iode, eph.iodc)
-    if isinstance(eph, GlonassEphemeris):
-        return (eph.system, eph.prn, eph.toe.gps_seconds, eph.frequency_channel, eph.iode)
-    if isinstance(eph, SbasEphemeris):
-        return (eph.system, eph.prn, eph.toe.gps_seconds, eph.tof.gps_seconds)
-    return (eph.system, eph.prn, eph.toe.gps_seconds)
+    return ephemeris_identity(eph)
 
 
 def _segment_name_parts(segment_path: Path, generated_at: datetime | None = None) -> tuple[str, str]:

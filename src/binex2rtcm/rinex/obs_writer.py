@@ -150,7 +150,7 @@ def _header_lines(
         header_line(f"{receiver_serial:<20}{receiver_type:<20}{receiver_version:<20}", "REC # / TYPE / VERS"),
         header_line(f"{antenna_serial:<20}{antenna_type_text(station):<20}", "ANT # / TYPE"),
     ]
-    if station is None:
+    if station is None or station.ecef_xyz_m is None:
         lines.append(header_line(f"{0.0:14.4f}{0.0:14.4f}{0.0:14.4f}{'':18s}", "APPROX POSITION XYZ"))
         lines.append(header_line(f"{0.0:14.4f}{0.0:14.4f}{0.0:14.4f}{'':18s}", "ANTENNA: DELTA H/E/N"))
     else:

@@ -12,8 +12,8 @@ from ..errors import StreamError
 from ..logging_utils import append_input_error
 from .base import InputAdapter
 from .reconnect import (
-    RECONNECT_FAILURE_COOLDOWN_THRESHOLD,
-    next_reconnect_delay_s,
+    plan_reconnect,
+    reset_failure_count_after_wait,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -112,6 +112,7 @@ class NtripClientInput(InputAdapter):
         while True:
             writer = None
             gga_task = None
+            received_payload = False
             try:
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(self._config.host, self._config.port),
@@ -128,27 +129,30 @@ class NtripClientInput(InputAdapter):
                 header, remainder = await self._read_header(reader)
                 if not ("200 OK" in header or header.startswith("ICY 200")):
                     raise StreamError(f"NTRIP connect failed: {header!r}")
-                consecutive_failures = 0
                 if self._config.send_nmea_gga and self._config.source_position_llh is not None:
                     gga_task = asyncio.create_task(self._gga_loop(writer), name="ntrip-gga")
                 async for chunk in self._iter_body(reader, header, remainder):
+                    if chunk and not received_payload:
+                        consecutive_failures = 0
+                        received_payload = True
                     yield chunk
+                raise StreamError("NTRIP input disconnected")
             except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
                 raise
             except Exception as exc:
-                consecutive_failures += 1
-                delay_s = next_reconnect_delay_s(self._config.reconnect_delay_s, consecutive_failures)
-                cooldown_active = consecutive_failures >= RECONNECT_FAILURE_COOLDOWN_THRESHOLD
+                decision = plan_reconnect(self._config.reconnect_delay_s, consecutive_failures)
+                consecutive_failures = decision.failure_count
                 message = (
                     f"NTRIP reconnect after error: {exc} "
-                    f"(failure #{consecutive_failures}, retry in {delay_s:.0f}s)"
+                    f"(failure #{decision.failure_count}, retry in {decision.delay_s:.0f}s)"
                 )
-                if cooldown_active:
+                if decision.cooldown_active:
                     message += " after repeated failures"
                 append_input_error(self._config, "WARNING", message)
                 LOGGER.warning(message)
                 yield b""
-                await asyncio.sleep(delay_s)
+                await asyncio.sleep(decision.delay_s)
+                consecutive_failures = reset_failure_count_after_wait(decision)
             finally:
                 try:
                     if gga_task is not None:

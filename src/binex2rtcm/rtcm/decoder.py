@@ -15,7 +15,13 @@ from ..gnss_time import (
     adjust_week,
     utc_to_gpst_seconds,
 )
-from ..model.ephemeris import Ephemeris, GlonassEphemeris, KeplerEphemeris
+from ..model.ephemeris import (
+    Ephemeris,
+    GALILEO_FNAV_DATA_SOURCE,
+    GALILEO_INAV_DATA_SOURCE,
+    GlonassEphemeris,
+    KeplerEphemeris,
+)
 from ..model.observation import EpochObservations, SatelliteObservation, SignalObservation
 from ..model.signals import CLIGHT, Constellation, SIGNAL_MAP, signal_definition, wavelength_m
 from ..model.station import StationInfo
@@ -139,8 +145,14 @@ class RtcmDecoder:
         payload = frame[3 : 3 + length]
         reader = _BitReader(payload)
         message_type = reader.unsigned(12)
+        if message_type == 1005:
+            item = self._decode_1005(reader)
+            return [item] if item is not None else []
         if message_type == 1006:
             item = self._decode_1006(reader)
+            return [item] if item is not None else []
+        if message_type == 1007:
+            item = self._decode_1007(reader)
             return [item] if item is not None else []
         if message_type == 1008:
             item = self._decode_1008(reader)
@@ -158,6 +170,8 @@ class RtcmDecoder:
             return [self._decode_1044(reader)]
         if message_type == 1045:
             return [self._decode_1045(reader)]
+        if message_type == 1046:
+            return [self._decode_1046(reader)]
         if message_type == 1004:
             return [self._decode_1004(reader)]
         if message_type == 1012:
@@ -171,9 +185,13 @@ class RtcmDecoder:
     def _build_station_info(self) -> StationInfo | None:
         ecef_xyz_m = self._station_meta.get("ecef_xyz_m")
         if not isinstance(ecef_xyz_m, tuple):
-            return None
-        return StationInfo(
-            station_id=self._station_id,
+            ecef_xyz_m = None
+        station_id = int(self._station_meta.get("station_id", self._station_id))
+        site_identifier = str(self._station_meta.get("site_identifier", ""))
+        if not site_identifier and station_id > 0:
+            site_identifier = f"{station_id:04d}"
+        station = StationInfo(
+            station_id=station_id,
             ecef_xyz_m=ecef_xyz_m,
             antenna_height_m=float(self._station_meta.get("antenna_height_m", 0.0)),
             antenna_descriptor=str(self._station_meta.get("antenna_descriptor", "")),
@@ -184,20 +202,36 @@ class RtcmDecoder:
             receiver_serial=str(self._station_meta.get("receiver_serial", "")),
             marker_name=str(self._station_meta.get("marker_name", "")),
             site_name=str(self._station_meta.get("site_name", "")),
-            site_identifier=str(self._station_meta.get("site_identifier", "")),
+            site_identifier=site_identifier,
             metadata_format=str(self._station_meta.get("metadata_format", "")),
         )
+        return station if station.has_any_metadata() else None
+
+    def _set_station_id(self, station_id: int) -> None:
+        self._station_id = station_id
+        self._station_meta["station_id"] = station_id
+
+    def _decode_1005(self, reader: _BitReader) -> StationInfo | None:
+        station_id = reader.unsigned(12)
+        self._set_station_id(station_id)
+        reader.unsigned(6)
+        reader.unsigned(4)
+        x = reader.signed(38) * 0.0001
+        reader.unsigned(2)
+        y = reader.signed(38) * 0.0001
+        reader.unsigned(2)
+        z = reader.signed(38) * 0.0001
+        self._station_meta["ecef_xyz_m"] = (x, y, z)
+        self._station_meta.setdefault("antenna_height_m", 0.0)
+        return self._build_station_info()
 
     def _decode_1006(self, reader: _BitReader) -> StationInfo | None:
-        reader.unsigned(12)
+        station_id = reader.unsigned(12)
+        self._set_station_id(station_id)
         reader.unsigned(6)
-        reader.unsigned(1)
-        reader.unsigned(1)
-        reader.unsigned(1)
-        reader.unsigned(1)
+        reader.unsigned(4)
         x = reader.signed(38) * 0.0001
-        reader.unsigned(1)
-        reader.unsigned(1)
+        reader.unsigned(2)
         y = reader.signed(38) * 0.0001
         reader.unsigned(2)
         z = reader.signed(38) * 0.0001
@@ -206,8 +240,19 @@ class RtcmDecoder:
         self._station_meta["antenna_height_m"] = height
         return self._build_station_info()
 
+    def _decode_1007(self, reader: _BitReader) -> StationInfo | None:
+        station_id = reader.unsigned(12)
+        self._set_station_id(station_id)
+        descriptor = reader.ascii(reader.unsigned(8))
+        reader.unsigned(8)
+        antenna_descriptor, antenna_radome = _split_antenna_descriptor(descriptor)
+        self._station_meta["antenna_descriptor"] = antenna_descriptor
+        self._station_meta["antenna_radome"] = antenna_radome
+        return self._build_station_info()
+
     def _decode_1008(self, reader: _BitReader) -> StationInfo | None:
-        reader.unsigned(12)
+        station_id = reader.unsigned(12)
+        self._set_station_id(station_id)
         descriptor = reader.ascii(reader.unsigned(8))
         reader.unsigned(8)
         serial = reader.ascii(reader.unsigned(8))
@@ -218,7 +263,8 @@ class RtcmDecoder:
         return self._build_station_info()
 
     def _decode_1033(self, reader: _BitReader) -> StationInfo | None:
-        reader.unsigned(12)
+        station_id = reader.unsigned(12)
+        self._set_station_id(station_id)
         descriptor = reader.ascii(reader.unsigned(8))
         reader.unsigned(8)
         antenna_serial = reader.ascii(reader.unsigned(8))
@@ -791,6 +837,79 @@ class RtcmDecoder:
             sva=sva,
             svh=svh,
             tgd=(tgd, 0.0),
+            code=GALILEO_FNAV_DATA_SOURCE,
+        )
+        self._reference_time = toc_time
+        return eph
+
+    def _decode_1046(self, reader: _BitReader) -> KeplerEphemeris:
+        prn = reader.unsigned(6)
+        reference_week = self._reference_week()
+        adjusted_reference = None if reference_week is None else max(0, reference_week - 1024)
+        week = _expand_week(reader.unsigned(12), 4096, adjusted_reference) + 1024
+        iode = reader.unsigned(10)
+        sva = reader.unsigned(8)
+        idot = reader.signed(14) * P2_43 * SC2RAD
+        toc = reader.unsigned(14) * 60.0
+        f2 = reader.signed(6) * P2_59
+        f1 = reader.signed(21) * P2_46
+        f0 = reader.signed(31) * P2_34
+        crs = reader.signed(16) * P2_5
+        deln = reader.signed(16) * P2_43 * SC2RAD
+        m0 = reader.signed(32) * P2_31 * SC2RAD
+        cuc = reader.signed(16) * P2_29
+        e = reader.unsigned(32) * P2_33
+        cus = reader.signed(16) * P2_29
+        sqrt_a = reader.unsigned(32) * P2_19
+        toes = reader.unsigned(14) * 60.0
+        cic = reader.signed(16) * P2_29
+        omega0 = reader.signed(32) * P2_31 * SC2RAD
+        cis = reader.signed(16) * P2_29
+        i0 = reader.signed(32) * P2_31 * SC2RAD
+        crc = reader.signed(16) * P2_5
+        omega = reader.signed(32) * P2_31 * SC2RAD
+        omega_dot = reader.signed(24) * P2_43 * SC2RAD
+        tgd1 = reader.signed(10) * P2_32
+        tgd2 = reader.signed(10) * P2_32
+        e5b_hs = reader.unsigned(2)
+        e5b_dvs = reader.unsigned(1)
+        e1_hs = reader.unsigned(2)
+        e1_dvs = reader.unsigned(1)
+        svh = (e5b_hs << 7) | (e5b_dvs << 6) | (e1_hs << 1) | e1_dvs
+        toc_time = GNSSTime.from_gps_week_tow(week, toc)
+        toe_time = GNSSTime.from_gps_week_tow(week, toes)
+        eph = KeplerEphemeris(
+            system=Constellation.GAL,
+            prn=prn,
+            toe=toe_time,
+            week=week,
+            toes=toes,
+            toc=toc_time,
+            ttr=toc_time,
+            iode=iode,
+            iodc=iode,
+            f0=f0,
+            f1=f1,
+            f2=f2,
+            deln=deln,
+            m0=m0,
+            e=e,
+            sqrt_a=sqrt_a,
+            cuc=cuc,
+            cus=cus,
+            crc=crc,
+            crs=crs,
+            cic=cic,
+            cis=cis,
+            omega0=omega0,
+            omega=omega,
+            i0=i0,
+            omega_dot=omega_dot,
+            idot=idot,
+            sva=sva,
+            svh=svh,
+            tgd=(tgd1, tgd2),
+            code=GALILEO_INAV_DATA_SOURCE,
         )
         self._reference_time = toc_time
         return eph

@@ -87,7 +87,7 @@ replay_rate = 0
 #port = 9001
 #chunk_size = 4096
 #connect_timeout_s = 10.0
-#reconnect_delay_s = 5.0
+#reconnect_delay_s = 5.0  # 연속 실패 5회 이상이면 다음 재시도는 1시간 뒤
 #capture_path = "runs/default/tcp-input.binex"
 #capture_interval = "10M"
 #capture_rinex = { enabled = true, observation = true, navigation = true, crx = false }
@@ -142,7 +142,7 @@ max_queue = 512
 #password = "your-ntrip-password"
 #chunk_size = 4096
 #connect_timeout_s = 10.0
-#reconnect_delay_s = 5.0
+#reconnect_delay_s = 5.0  # 연속 실패 5회 이상이면 다음 재시도는 1시간 뒤
 #capture_path = "runs/live/chul_input.bnx"
 #capture_interval = "1H"
 #capture_rinex = { enabled = true, observation = true, navigation = true, crx = false }

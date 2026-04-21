@@ -462,12 +462,14 @@ class BinexEncoder:
         add_string("receiver_version", station.receiver_version)
         add_string("antenna_radome", station.antenna_radome)
 
-        payload.extend(_ubnxi(0x1D))
-        payload.extend(_ubnxi(0))
-        payload.extend(struct.pack(">ddd", *station.ecef_xyz_m))
+        if station.ecef_xyz_m is not None:
+            payload.extend(_ubnxi(0x1D))
+            payload.extend(_ubnxi(0))
+            payload.extend(struct.pack(">ddd", *station.ecef_xyz_m))
 
-        payload.extend(_ubnxi(0x1F))
-        payload.extend(struct.pack(">ddd", station.antenna_height_m, 0.0, 0.0))
+        if station.ecef_xyz_m is not None or abs(station.antenna_height_m) > 0.0:
+            payload.extend(_ubnxi(0x1F))
+            payload.extend(struct.pack(">ddd", station.antenna_height_m, 0.0, 0.0))
         return bytes(payload)
 
     def _encode_kepler_ephemeris(self, eph: KeplerEphemeris) -> bytes:

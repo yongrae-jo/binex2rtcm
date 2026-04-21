@@ -338,8 +338,11 @@ class BinexDecoder:
     def _build_station_info(self) -> StationInfo | None:
         ecef_xyz_m = self._station_meta.get("ecef_xyz_m")
         if not isinstance(ecef_xyz_m, tuple):
-            return None
-        return StationInfo(
+            ecef_xyz_m = None
+        site_identifier = str(self._station_meta.get("site_identifier", ""))
+        if not site_identifier and self._station_id > 0:
+            site_identifier = f"{self._station_id:04d}"
+        station = StationInfo(
             station_id=self._station_id,
             ecef_xyz_m=ecef_xyz_m,
             antenna_height_m=float(self._station_meta.get("antenna_height_m", 0.0)),
@@ -356,9 +359,10 @@ class BinexDecoder:
                 )
             ),
             site_name=str(self._station_meta.get("site_name", "")),
-            site_identifier=str(self._station_meta.get("site_identifier", "")),
+            site_identifier=site_identifier,
             metadata_format=str(self._station_meta.get("metadata_format", "")),
         )
+        return station if station.has_any_metadata() else None
 
     def _decode_site_metadata(self, payload: bytes) -> StationInfo | None:
         if len(payload) < 6:

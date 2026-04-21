@@ -12,7 +12,13 @@ import math
 
 from ..errors import UnsupportedMessageError
 from ..gnss_time import GNSSTime, glonass_day_index, gpst_to_utc_datetime
-from ..model.ephemeris import Ephemeris, GlonassEphemeris, KeplerEphemeris
+from ..model.ephemeris import (
+    Ephemeris,
+    GALILEO_INAV_DATA_SOURCE,
+    GlonassEphemeris,
+    KeplerEphemeris,
+    is_galileo_inav_data_source,
+)
 from ..model.observation import SatelliteObservation, SignalObservation
 from ..model.signals import (
     CLIGHT,
@@ -364,7 +370,26 @@ class RtcmEncoder:
     def _encode_station(self, payload: StationMessage) -> BitBuffer:
         station = payload.station
         body = BitBuffer()
+        if payload.message_type == 1005:
+            if station.ecef_xyz_m is None:
+                raise UnsupportedMessageError("RTCM 1005 station message requires ECEF coordinates")
+            body.append_unsigned(1005, 12)
+            body.append_unsigned(station.station_id, 12)
+            body.append_unsigned(0, 6)
+            body.append_unsigned(1, 1)
+            body.append_unsigned(1, 1)
+            body.append_unsigned(1, 1)
+            body.append_unsigned(0, 1)
+            _append_signed_38(body, _round(station.ecef_xyz_m[0] / 0.0001))
+            body.append_unsigned(1, 1)
+            body.append_unsigned(0, 1)
+            _append_signed_38(body, _round(station.ecef_xyz_m[1] / 0.0001))
+            body.append_unsigned(0, 2)
+            _append_signed_38(body, _round(station.ecef_xyz_m[2] / 0.0001))
+            return body
         if payload.message_type == 1006:
+            if station.ecef_xyz_m is None:
+                raise UnsupportedMessageError("RTCM 1006 station message requires ECEF coordinates")
             height = _round(max(0.0, min(station.antenna_height_m, 6.5535)) / 0.0001)
             body.append_unsigned(1006, 12)
             body.append_unsigned(station.station_id, 12)
@@ -380,6 +405,12 @@ class RtcmEncoder:
             body.append_unsigned(0, 2)
             _append_signed_38(body, _round(station.ecef_xyz_m[2] / 0.0001))
             body.append_unsigned(height, 16)
+            return body
+        if payload.message_type == 1007:
+            body.append_unsigned(1007, 12)
+            body.append_unsigned(station.station_id, 12)
+            _append_string_field(body, _antenna_descriptor_text(station))
+            body.append_unsigned(0, 8)
             return body
         if payload.message_type == 1008:
             body.append_unsigned(1008, 12)
@@ -422,6 +453,8 @@ class RtcmEncoder:
             return self._encode_1044(eph)
         if msg_type == 1045 and isinstance(eph, KeplerEphemeris) and eph.system is Constellation.GAL:
             return self._encode_1045(eph)
+        if msg_type == 1046 and isinstance(eph, KeplerEphemeris) and eph.system is Constellation.GAL:
+            return self._encode_1046(eph)
         if msg_type == 1041:
             raise UnsupportedMessageError("RTCM 1041 NavIC/IRNSS ephemeris is defined but not implemented yet")
         if msg_type == 1043:
@@ -619,6 +652,44 @@ class RtcmEncoder:
         body.append_unsigned((eph.svh >> 4) & 0x03, 2)
         body.append_unsigned((eph.svh >> 3) & 0x01, 1)
         body.append_unsigned(0, 7)
+        return body
+
+    def _encode_1046(self, eph: KeplerEphemeris) -> BitBuffer:
+        week = (eph.week - 1024) % 4096
+        toc = _round(eph.toc.gps_week_tow()[1] / 60.0)
+        toe = _round(eph.toes / 60.0)
+        body = BitBuffer()
+        body.append_unsigned(1046, 12)
+        body.append_unsigned(eph.prn, 6)
+        body.append_unsigned(week, 12)
+        body.append_unsigned(eph.iode, 10)
+        body.append_unsigned(eph.sva, 8)
+        body.append_signed(_round(eph.idot / P2_43 / SC2RAD), 14)
+        body.append_unsigned(toc, 14)
+        body.append_signed(_round(eph.f2 / P2_59), 6)
+        body.append_signed(_round(eph.f1 / P2_46), 21)
+        body.append_signed(_round(eph.f0 / P2_34), 31)
+        body.append_signed(_round(eph.crs / P2_5), 16)
+        body.append_signed(_round(eph.deln / P2_43 / SC2RAD), 16)
+        body.append_signed(_round(eph.m0 / P2_31 / SC2RAD), 32)
+        body.append_signed(_round(eph.cuc / P2_29), 16)
+        body.append_unsigned(_round_u(eph.e / P2_33), 32)
+        body.append_signed(_round(eph.cus / P2_29), 16)
+        body.append_unsigned(_round_u(eph.sqrt_a / P2_19), 32)
+        body.append_unsigned(toe, 14)
+        body.append_signed(_round(eph.cic / P2_29), 16)
+        body.append_signed(_round(eph.omega0 / P2_31 / SC2RAD), 32)
+        body.append_signed(_round(eph.cis / P2_29), 16)
+        body.append_signed(_round(eph.i0 / P2_31 / SC2RAD), 32)
+        body.append_signed(_round(eph.crc / P2_5), 16)
+        body.append_signed(_round(eph.omega / P2_31 / SC2RAD), 32)
+        body.append_signed(_round(eph.omega_dot / P2_43 / SC2RAD), 24)
+        body.append_signed(_round(eph.tgd[0] / P2_32), 10)
+        body.append_signed(_round(eph.tgd[1] / P2_32), 10)
+        body.append_unsigned((eph.svh >> 7) & 0x03, 2)
+        body.append_unsigned((eph.svh >> 6) & 0x01, 1)
+        body.append_unsigned((eph.svh >> 1) & 0x03, 2)
+        body.append_unsigned(eph.svh & 0x01, 1)
         return body
 
     def _encode_msm(

@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from ..gnss_time import GNSSTime
 from .signals import Constellation, satellite_id
 
+GALILEO_FNAV_DATA_SOURCE = (1 << 1) | (1 << 8)
+GALILEO_INAV_DATA_SOURCE = (1 << 0) | (1 << 2) | (1 << 9)
+
 
 @dataclass(slots=True)
 class EphemerisBase:
@@ -81,3 +84,20 @@ class SbasEphemeris(EphemerisBase):
 
 
 Ephemeris = KeplerEphemeris | GlonassEphemeris | SbasEphemeris
+
+
+def ephemeris_identity(eph: Ephemeris) -> tuple[object, ...]:
+    if isinstance(eph, KeplerEphemeris):
+        key: tuple[object, ...] = (eph.system, eph.prn, eph.week, eph.toes, eph.iode, eph.iodc)
+        if eph.system is Constellation.GAL:
+            return (*key, eph.code)
+        return key
+    if isinstance(eph, GlonassEphemeris):
+        return (eph.system, eph.prn, eph.toe.gps_seconds, eph.frequency_channel, eph.iode)
+    if isinstance(eph, SbasEphemeris):
+        return (eph.system, eph.prn, eph.toe.gps_seconds, eph.tof.gps_seconds)
+    return (eph.system, eph.prn, eph.toe.gps_seconds)
+
+
+def is_galileo_inav_data_source(code: int) -> bool:
+    return bool(code & GALILEO_INAV_DATA_SOURCE)
